@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
@@ -16,27 +17,27 @@ type EditorOpts struct {
 
 // EditorStyle defines editor colors
 type EditorStyle struct {
-	TextFg        terminal.RGB
-	TextBg        terminal.RGB
-	CursorFg      terminal.RGB
-	CursorBg      terminal.RGB
-	LineNumFg     terminal.RGB
-	LineNumBg     terminal.RGB
-	CurrentLineBg terminal.RGB
-	BorderFg      terminal.RGB
+	TextFg        color.RGB
+	TextBg        color.RGB
+	CursorFg      color.RGB
+	CursorBg      color.RGB
+	LineNumFg     color.RGB
+	LineNumBg     color.RGB
+	CurrentLineBg color.RGB
+	BorderFg      color.RGB
 }
 
 // DefaultEditorStyle returns default colors
 func DefaultEditorStyle() EditorStyle {
 	return EditorStyle{
-		TextFg:        terminal.RGB{R: 220, G: 220, B: 220},
-		TextBg:        terminal.RGB{R: 25, G: 25, B: 35},
-		CursorFg:      terminal.RGB{R: 0, G: 0, B: 0},
-		CursorBg:      terminal.RGB{R: 200, G: 200, B: 200},
-		LineNumFg:     terminal.RGB{R: 100, G: 100, B: 120},
-		LineNumBg:     terminal.RGB{R: 30, G: 30, B: 40},
-		CurrentLineBg: terminal.RGB{R: 35, G: 35, B: 50},
-		BorderFg:      terminal.RGB{R: 80, G: 80, B: 100},
+		TextFg:        color.RGB{R: 220, G: 220, B: 220},
+		TextBg:        color.RGB{R: 25, G: 25, B: 35},
+		CursorFg:      color.RGB{R: 0, G: 0, B: 0},
+		CursorBg:      color.RGB{R: 200, G: 200, B: 200},
+		LineNumFg:     color.RGB{R: 100, G: 100, B: 120},
+		LineNumBg:     color.RGB{R: 30, G: 30, B: 40},
+		CurrentLineBg: color.RGB{R: 35, G: 35, B: 50},
+		BorderFg:      color.RGB{R: 80, G: 80, B: 100},
 	}
 }
 
@@ -195,3 +196,4 @@ func formatLineNum(num, width int) string {
 	}
 	return s
 }
+

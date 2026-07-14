@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // Button defines a single button in a button bar
 type Button struct {
@@ -18,27 +21,27 @@ type ButtonBarOpts struct {
 
 // ButtonStyle defines button bar colors
 type ButtonStyle struct {
-	LabelFg terminal.RGB
-	LabelBg terminal.RGB
-	KeyFg   terminal.RGB
-	FocusFg terminal.RGB
-	FocusBg terminal.RGB
-	Bg      terminal.RGB
+	LabelFg color.RGB
+	LabelBg color.RGB
+	KeyFg   color.RGB
+	FocusFg color.RGB
+	FocusBg color.RGB
+	Bg      color.RGB
 }
 
 // DefaultButtonStyle returns default button colors with dark background
 func DefaultButtonStyle() ButtonStyle {
-	return DefaultButtonStyleFrom(terminal.RGB{R: 25, G: 25, B: 35})
+	return DefaultButtonStyleFrom(color.RGB{R: 25, G: 25, B: 35})
 }
 
 // DefaultButtonStyleFrom returns default button colors using the given background
-func DefaultButtonStyleFrom(bg terminal.RGB) ButtonStyle {
+func DefaultButtonStyleFrom(bg color.RGB) ButtonStyle {
 	return ButtonStyle{
-		LabelFg: terminal.RGB{R: 200, G: 200, B: 200},
-		LabelBg: terminal.RGB{R: 50, G: 50, B: 60},
-		KeyFg:   terminal.RGB{R: 130, G: 130, B: 150},
-		FocusFg: terminal.RGB{R: 255, G: 255, B: 255},
-		FocusBg: terminal.RGB{R: 60, G: 80, B: 120},
+		LabelFg: color.RGB{R: 200, G: 200, B: 200},
+		LabelBg: color.RGB{R: 50, G: 50, B: 60},
+		KeyFg:   color.RGB{R: 130, G: 130, B: 150},
+		FocusFg: color.RGB{R: 255, G: 255, B: 255},
+		FocusBg: color.RGB{R: 60, G: 80, B: 120},
 		Bg:      bg,
 	}
 }
@@ -125,3 +128,4 @@ func (r Region) ButtonBar(y int, buttons []Button, opts ButtonBarOpts) {
 		}
 	}
 }
+

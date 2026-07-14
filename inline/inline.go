@@ -48,6 +48,10 @@ func New(w io.Writer) *Printer {
 	}
 	p.color = p.tty != nil && os.Getenv("NO_COLOR") == ""
 	p.mode = terminal.DetectColorMode()
+	// Keep the LUT build out of the first Paint call
+	if p.color && p.mode == terminal.ColorMode256 {
+		terminal.WarmPalette256()
+	}
 	return p
 }
 

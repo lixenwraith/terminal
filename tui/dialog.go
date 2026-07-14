@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // ConfirmResult represents dialog outcome
 type ConfirmResult uint8
@@ -98,31 +101,31 @@ type ConfirmOpts struct {
 
 // ConfirmStyle defines dialog colors
 type ConfirmStyle struct {
-	BorderFg      terminal.RGB
-	TitleFg       terminal.RGB
-	MessageFg     terminal.RGB
-	Bg            terminal.RGB
-	ButtonFg      terminal.RGB
-	ButtonBg      terminal.RGB
-	ButtonFocusFg terminal.RGB
-	ButtonFocusBg terminal.RGB
-	DestructiveFg terminal.RGB
-	DestructiveBg terminal.RGB
+	BorderFg      color.RGB
+	TitleFg       color.RGB
+	MessageFg     color.RGB
+	Bg            color.RGB
+	ButtonFg      color.RGB
+	ButtonBg      color.RGB
+	ButtonFocusFg color.RGB
+	ButtonFocusBg color.RGB
+	DestructiveFg color.RGB
+	DestructiveBg color.RGB
 }
 
 // DefaultConfirmStyle returns default dialog colors
 func DefaultConfirmStyle() ConfirmStyle {
 	return ConfirmStyle{
-		BorderFg:      terminal.RGB{R: 100, G: 100, B: 120},
-		TitleFg:       terminal.RGB{R: 255, G: 255, B: 255},
-		MessageFg:     terminal.RGB{R: 200, G: 200, B: 200},
-		Bg:            terminal.RGB{R: 30, G: 30, B: 40},
-		ButtonFg:      terminal.RGB{R: 180, G: 180, B: 180},
-		ButtonBg:      terminal.RGB{R: 50, G: 50, B: 60},
-		ButtonFocusFg: terminal.RGB{R: 255, G: 255, B: 255},
-		ButtonFocusBg: terminal.RGB{R: 60, G: 80, B: 120},
-		DestructiveFg: terminal.RGB{R: 255, G: 255, B: 255},
-		DestructiveBg: terminal.RGB{R: 180, G: 60, B: 60},
+		BorderFg:      color.RGB{R: 100, G: 100, B: 120},
+		TitleFg:       color.RGB{R: 255, G: 255, B: 255},
+		MessageFg:     color.RGB{R: 200, G: 200, B: 200},
+		Bg:            color.RGB{R: 30, G: 30, B: 40},
+		ButtonFg:      color.RGB{R: 180, G: 180, B: 180},
+		ButtonBg:      color.RGB{R: 50, G: 50, B: 60},
+		ButtonFocusFg: color.RGB{R: 255, G: 255, B: 255},
+		ButtonFocusBg: color.RGB{R: 60, G: 80, B: 120},
+		DestructiveFg: color.RGB{R: 255, G: 255, B: 255},
+		DestructiveBg: color.RGB{R: 180, G: 60, B: 60},
 	}
 }
 
@@ -322,3 +325,4 @@ func (r Region) AlertDialog(opts AlertOpts) Region {
 
 	return content.Sub(0, 0, content.W, buttonY-1)
 }
+

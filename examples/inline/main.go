@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 	"github.com/lixenwraith/terminal/inline"
 )
@@ -12,9 +13,9 @@ import (
 func main() {
 	p := inline.New(os.Stdout)
 
-	name := inline.Fg(terminal.LightSkyBlue).Attr(terminal.AttrBold)
-	okSt := inline.Fg(terminal.LimeGreen).Attr(terminal.AttrBold)
-	dim := inline.Fg(terminal.IronGray)
+	name := inline.Fg(color.LightSkyBlue).Attr(terminal.AttrBold)
+	okSt := inline.Fg(color.LimeGreen).Attr(terminal.AttrBold)
+	dim := inline.Fg(color.IronGray)
 
 	pkgs := []string{"openssl", "zlib", "curl", "git", "go"}
 	frame := 0

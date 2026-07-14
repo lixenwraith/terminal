@@ -200,7 +200,7 @@ Pure logic, no rendering — usable independently:
 
 - Width calculations count runes, not terminal columns; East Asian wide
   characters and combining marks are not width-aware.
-- Zero-value `terminal.RGB` in style fields generally means "inherit"
+- Zero-value `color.RGB` in style fields generally means "inherit"
   (widget default or row background) — check specific widget docs.
 - Mouse hit testing: `TabBar` returns `[]TabBounds`; other widgets require
   application-side geometry from the regions used.

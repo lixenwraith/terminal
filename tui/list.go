@@ -1,22 +1,25 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // ListItem represents a single row in a scrollable list
 type ListItem struct {
 	Indent    int  // Left padding in cells
 	Icon      rune // Expand indicator or bullet, 0 = none
-	IconFg    terminal.RGB
+	IconFg    color.RGB
 	Check     CheckState // CheckNone to skip checkbox
-	CheckFg   terminal.RGB
+	CheckFg   color.RGB
 	Text      string
 	TextStyle Style
 }
 
 // ListOpts configures list rendering
 type ListOpts struct {
-	CursorBg  terminal.RGB
-	DefaultBg terminal.RGB
+	CursorBg  color.RGB
+	DefaultBg color.RGB
 	IconWidth int // Width reserved for icon, default 2
 }
 
@@ -49,7 +52,7 @@ func (r Region) List(items []ListItem, cursor, scroll int, opts ListOpts) int {
 
 		// Clear row
 		for x := 0; x < r.W; x++ {
-			r.Cell(x, y, ' ', terminal.RGB{}, bg, terminal.AttrNone)
+			r.Cell(x, y, ' ', color.RGB{}, bg, terminal.AttrNone)
 		}
 
 		x := item.Indent
@@ -61,7 +64,7 @@ func (r Region) List(items []ListItem, cursor, scroll int, opts ListOpts) int {
 		x += iconW
 
 		// Checkbox
-		if item.Check != CheckNone || item.CheckFg != (terminal.RGB{}) {
+		if item.Check != CheckNone || item.CheckFg != (color.RGB{}) {
 			if x+3 <= r.W {
 				var ch rune
 				switch item.Check {
@@ -83,7 +86,7 @@ func (r Region) List(items []ListItem, cursor, scroll int, opts ListOpts) int {
 
 		// Text
 		textStyle := item.TextStyle
-		if textStyle.Bg == (terminal.RGB{}) {
+		if textStyle.Bg == (color.RGB{}) {
 			textStyle.Bg = bg
 		}
 		text := item.Text
@@ -97,3 +100,4 @@ func (r Region) List(items []ListItem, cursor, scroll int, opts ListOpts) int {
 
 	return rendered
 }
+

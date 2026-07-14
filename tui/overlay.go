@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // OverlayStyle specifies overlay appearance
 type OverlayStyle uint8
@@ -17,10 +20,10 @@ type OverlayOpts struct {
 	Style   OverlayStyle
 	Title   string
 	Border  LineType
-	Bg      terminal.RGB
-	Fg      terminal.RGB // Border and title color
-	TitleBg terminal.RGB // Title bar background, zero = same as Fg
-	TitleFg terminal.RGB // Title text color, zero = same as Bg
+	Bg      color.RGB
+	Fg      color.RGB // Border and title color
+	TitleBg color.RGB // Title bar background, zero = same as Fg
+	TitleFg color.RGB // Title text color, zero = same as Bg
 
 	// Modal/Floating positioning (ignored for Fullscreen)
 	Width  int // 0 = 80% of region
@@ -28,7 +31,7 @@ type OverlayOpts struct {
 	X, Y   int // Offset from center, 0 = centered
 
 	// Shadow for Floating style
-	ShadowColor terminal.RGB
+	ShadowColor color.RGB
 }
 
 // DefaultOverlayOpts returns sensible defaults for modal overlay
@@ -37,10 +40,10 @@ func DefaultOverlayOpts(title string) OverlayOpts {
 		Style:   OverlayModal,
 		Title:   title,
 		Border:  LineDouble,
-		Bg:      terminal.RGB{R: 25, G: 25, B: 35},
-		Fg:      terminal.RGB{R: 100, G: 140, B: 180},
-		TitleBg: terminal.RGB{R: 40, G: 60, B: 90},
-		TitleFg: terminal.RGB{R: 255, G: 255, B: 255},
+		Bg:      color.RGB{R: 25, G: 25, B: 35},
+		Fg:      color.RGB{R: 100, G: 140, B: 180},
+		TitleBg: color.RGB{R: 40, G: 60, B: 90},
+		TitleFg: color.RGB{R: 255, G: 255, B: 255},
 	}
 }
 
@@ -49,10 +52,10 @@ func FullscreenOverlayOpts(title string) OverlayOpts {
 	return OverlayOpts{
 		Style:   OverlayFullscreen,
 		Title:   title,
-		Bg:      terminal.RGB{R: 20, G: 20, B: 30},
-		Fg:      terminal.RGB{R: 100, G: 140, B: 180},
-		TitleBg: terminal.RGB{R: 40, G: 60, B: 90},
-		TitleFg: terminal.RGB{R: 255, G: 255, B: 255},
+		Bg:      color.RGB{R: 20, G: 20, B: 30},
+		Fg:      color.RGB{R: 100, G: 140, B: 180},
+		TitleBg: color.RGB{R: 40, G: 60, B: 90},
+		TitleFg: color.RGB{R: 255, G: 255, B: 255},
 	}
 }
 
@@ -98,11 +101,11 @@ func (r Region) renderFullscreenOverlay(opts OverlayOpts) OverlayResult {
 	// Title bar
 	if opts.Title != "" {
 		titleBg := opts.TitleBg
-		if titleBg == (terminal.RGB{}) {
+		if titleBg == (color.RGB{}) {
 			titleBg = opts.Fg
 		}
 		titleFg := opts.TitleFg
-		if titleFg == (terminal.RGB{}) {
+		if titleFg == (color.RGB{}) {
 			titleFg = opts.Bg
 		}
 
@@ -188,11 +191,11 @@ func (r Region) renderModalOverlay(opts OverlayOpts) OverlayResult {
 	// Title in top border
 	if opts.Title != "" && contentW > 2 {
 		titleBg := opts.TitleBg
-		if titleBg == (terminal.RGB{}) {
+		if titleBg == (color.RGB{}) {
 			titleBg = opts.Fg
 		}
 		titleFg := opts.TitleFg
-		if titleFg == (terminal.RGB{}) {
+		if titleFg == (color.RGB{}) {
 			titleFg = opts.Bg
 		}
 
@@ -224,8 +227,8 @@ func (r Region) renderModalOverlay(opts OverlayOpts) OverlayResult {
 func (r Region) renderFloatingOverlay(opts OverlayOpts) OverlayResult {
 	// Same as modal but with shadow
 	shadowColor := opts.ShadowColor
-	if shadowColor == (terminal.RGB{}) {
-		shadowColor = terminal.RGB{R: 10, G: 10, B: 15}
+	if shadowColor == (color.RGB{}) {
+		shadowColor = color.RGB{R: 10, G: 10, B: 15}
 	}
 
 	// Calculate dimensions (same as modal)
@@ -285,11 +288,11 @@ func (r Region) renderFloatingOverlay(opts OverlayOpts) OverlayResult {
 
 	if opts.Title != "" && contentW > 2 {
 		titleBg := opts.TitleBg
-		if titleBg == (terminal.RGB{}) {
+		if titleBg == (color.RGB{}) {
 			titleBg = opts.Fg
 		}
 		titleFg := opts.TitleFg
-		if titleFg == (terminal.RGB{}) {
+		if titleFg == (color.RGB{}) {
 			titleFg = opts.Bg
 		}
 
@@ -327,7 +330,7 @@ func (r Region) renderBorderTitleOverlay(opts OverlayOpts) OverlayResult {
 
 	if opts.Title != "" && r.W > 6 {
 		titleFg := opts.TitleFg
-		if titleFg == (terminal.RGB{}) {
+		if titleFg == (color.RGB{}) {
 			titleFg = opts.Fg
 		}
 		title := " " + opts.Title + " "
@@ -371,3 +374,4 @@ func (o *OverlayState) Hide() {
 func (o *OverlayState) Toggle() {
 	o.Visible = !o.Visible
 }
+

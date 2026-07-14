@@ -1,11 +1,12 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
 // ScrollBar draws vertical scrollbar track with thumb
-func (r Region) ScrollBar(x int, offset, visible, total int, fg terminal.RGB) {
+func (r Region) ScrollBar(x int, offset, visible, total int, fg color.RGB) {
 	if x < 0 || x >= r.W || r.H < 1 {
 		return
 	}
@@ -14,7 +15,7 @@ func (r Region) ScrollBar(x int, offset, visible, total int, fg terminal.RGB) {
 	if total <= visible || trackH < 3 {
 		// No scrolling needed or track too small
 		for y := range trackH {
-			r.Cell(x, y, '│', fg, terminal.RGB{}, terminal.AttrDim)
+			r.Cell(x, y, '│', fg, color.RGB{}, terminal.AttrDim)
 		}
 		return
 	}
@@ -42,12 +43,12 @@ func (r Region) ScrollBar(x int, offset, visible, total int, fg terminal.RGB) {
 		} else {
 			ch = '░'
 		}
-		r.Cell(x, y, ch, fg, terminal.RGB{}, terminal.AttrNone)
+		r.Cell(x, y, ch, fg, color.RGB{}, terminal.AttrNone)
 	}
 }
 
 // ScrollIndicator draws compact indicator text (Top/Bot/XX%)
-func (r Region) ScrollIndicator(y int, offset, visible, total int, fg terminal.RGB) {
+func (r Region) ScrollIndicator(y int, offset, visible, total int, fg color.RGB) {
 	if y < 0 || y >= r.H {
 		return
 	}
@@ -68,6 +69,5 @@ func (r Region) ScrollIndicator(y int, offset, visible, total int, fg terminal.R
 		}
 	}
 
-	r.TextRight(y, text, fg, terminal.RGB{}, terminal.AttrDim)
+	r.TextRight(y, text, fg, color.RGB{}, terminal.AttrDim)
 }
-

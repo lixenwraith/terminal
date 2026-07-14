@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
@@ -8,9 +9,9 @@ import (
 type PaneOpts struct {
 	Title    string
 	Border   LineType
-	BorderFg terminal.RGB
-	Bg       terminal.RGB
-	TitleFg  terminal.RGB
+	BorderFg color.RGB
+	Bg       color.RGB
+	TitleFg  color.RGB
 }
 
 // Pane draws bordered pane with optional title, returns content region
@@ -49,7 +50,7 @@ func (r Region) Pane(opts PaneOpts) Region {
 
 // TitledPane fills region with background, draws centered title at top, returns content region
 // Content region starts at row 1 with full width
-func (r Region) TitledPane(title string, titleFg, bg terminal.RGB) Region {
+func (r Region) TitledPane(title string, titleFg, bg color.RGB) Region {
 	r.Fill(bg)
 	if title != "" && r.H > 0 {
 		r.TextCenter(0, title, titleFg, bg, terminal.AttrBold)
@@ -61,9 +62,10 @@ func (r Region) TitledPane(title string, titleFg, bg terminal.RGB) Region {
 }
 
 // TitledPaneFocused is TitledPane with focus-dependent background
-func (r Region) TitledPaneFocused(title string, titleFg, bg, focusBg terminal.RGB, focused bool) Region {
+func (r Region) TitledPaneFocused(title string, titleFg, bg, focusBg color.RGB, focused bool) Region {
 	if focused {
 		bg = focusBg
 	}
 	return r.TitledPane(title, titleFg, bg)
 }
+

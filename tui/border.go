@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
@@ -36,7 +37,7 @@ const (
 // --- Box Rendering ---
 
 // Box draws border around region edge
-func (r Region) Box(line LineType, fg terminal.RGB) {
+func (r Region) Box(line LineType, fg color.RGB) {
 	if r.W < 2 || r.H < 2 {
 		return
 	}
@@ -45,7 +46,7 @@ func (r Region) Box(line LineType, fg terminal.RGB) {
 	}
 
 	chars := boxChars[line]
-	bg := terminal.RGB{} // Transparent (use existing bg)
+	bg := color.RGB{} // Transparent (use existing bg)
 
 	// Corners
 	r.Cell(0, 0, chars[boxTL], fg, bg, terminal.AttrNone)
@@ -67,7 +68,7 @@ func (r Region) Box(line LineType, fg terminal.RGB) {
 }
 
 // BoxFilled draws border and fills interior with background
-func (r Region) BoxFilled(line LineType, fg, bg terminal.RGB) {
+func (r Region) BoxFilled(line LineType, fg, bg color.RGB) {
 	// Fill interior first
 	for y := 1; y < r.H-1; y++ {
 		for x := 1; x < r.W-1; x++ {
@@ -81,7 +82,7 @@ func (r Region) BoxFilled(line LineType, fg, bg terminal.RGB) {
 // --- Line rendering ---
 
 // HLine draws horizontal line across region width at row y
-func (r Region) HLine(y int, line LineType, fg terminal.RGB) {
+func (r Region) HLine(y int, line LineType, fg color.RGB) {
 	if y < 0 || y >= r.H {
 		return
 	}
@@ -90,12 +91,12 @@ func (r Region) HLine(y int, line LineType, fg terminal.RGB) {
 	}
 	ch := boxChars[line][boxH]
 	for x := 0; x < r.W; x++ {
-		r.Cell(x, y, ch, fg, terminal.RGB{}, terminal.AttrNone)
+		r.Cell(x, y, ch, fg, color.RGB{}, terminal.AttrNone)
 	}
 }
 
 // VLine draws vertical line across region height at column x
-func (r Region) VLine(x int, line LineType, fg terminal.RGB) {
+func (r Region) VLine(x int, line LineType, fg color.RGB) {
 	if x < 0 || x >= r.W {
 		return
 	}
@@ -104,12 +105,12 @@ func (r Region) VLine(x int, line LineType, fg terminal.RGB) {
 	}
 	ch := boxChars[line][boxV]
 	for y := 0; y < r.H; y++ {
-		r.Cell(x, y, ch, fg, terminal.RGB{}, terminal.AttrNone)
+		r.Cell(x, y, ch, fg, color.RGB{}, terminal.AttrNone)
 	}
 }
 
 // Divider draws horizontal line with optional centered label
-func (r Region) Divider(y int, label string, line LineType, fg terminal.RGB) {
+func (r Region) Divider(y int, label string, line LineType, fg color.RGB) {
 	if y < 0 || y >= r.H {
 		return
 	}
@@ -121,7 +122,7 @@ func (r Region) Divider(y int, label string, line LineType, fg terminal.RGB) {
 
 	// Fill with horizontal line
 	for x := 0; x < r.W; x++ {
-		r.Cell(x, y, hChar, fg, terminal.RGB{}, terminal.AttrNone)
+		r.Cell(x, y, hChar, fg, color.RGB{}, terminal.AttrNone)
 	}
 
 	// Center label if provided
@@ -134,7 +135,7 @@ func (r Region) Divider(y int, label string, line LineType, fg terminal.RGB) {
 		}
 		startX := (r.W - textLen) / 2
 		for i, ch := range text {
-			r.Cell(startX+i, y, ch, fg, terminal.RGB{}, terminal.AttrBold)
+			r.Cell(startX+i, y, ch, fg, color.RGB{}, terminal.AttrBold)
 		}
 	}
 }
@@ -142,7 +143,7 @@ func (r Region) Divider(y int, label string, line LineType, fg terminal.RGB) {
 // --- Card rendering ---
 
 // Card draws titled border and returns inner content region
-func (r Region) Card(title string, line LineType, fg terminal.RGB) Region {
+func (r Region) Card(title string, line LineType, fg color.RGB) Region {
 	r.Box(line, fg)
 
 	if title != "" && r.W > 4 {
@@ -152,8 +153,9 @@ func (r Region) Card(title string, line LineType, fg terminal.RGB) Region {
 			displayTitle = Truncate(displayTitle, maxTitleLen)
 		}
 		titleX := (r.W - RuneLen(displayTitle) - 2) / 2
-		r.Text(titleX, 0, " "+displayTitle+" ", fg, terminal.RGB{}, terminal.AttrBold)
+		r.Text(titleX, 0, " "+displayTitle+" ", fg, color.RGB{}, terminal.AttrBold)
 	}
 
 	return r.Inset(1)
 }
+

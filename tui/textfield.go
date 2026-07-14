@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
@@ -18,25 +19,25 @@ type TextFieldOpts struct {
 // DefaultTextFieldStyle returns default colors
 func DefaultTextFieldStyle() TextFieldStyle {
 	return TextFieldStyle{
-		TextFg:        terminal.RGB{R: 220, G: 220, B: 220},
-		TextBg:        terminal.RGB{R: 30, G: 30, B: 40},
-		CursorFg:      terminal.RGB{R: 0, G: 0, B: 0},
-		CursorBg:      terminal.RGB{R: 200, G: 200, B: 200},
-		PlaceholderFg: terminal.RGB{R: 100, G: 100, B: 110},
-		PrefixFg:      terminal.RGB{R: 150, G: 150, B: 180},
-		BorderFg:      terminal.RGB{R: 80, G: 80, B: 100},
+		TextFg:        color.RGB{R: 220, G: 220, B: 220},
+		TextBg:        color.RGB{R: 30, G: 30, B: 40},
+		CursorFg:      color.RGB{R: 0, G: 0, B: 0},
+		CursorBg:      color.RGB{R: 200, G: 200, B: 200},
+		PlaceholderFg: color.RGB{R: 100, G: 100, B: 110},
+		PrefixFg:      color.RGB{R: 150, G: 150, B: 180},
+		BorderFg:      color.RGB{R: 80, G: 80, B: 100},
 	}
 }
 
 // TextFieldStyle defines text field colors
 type TextFieldStyle struct {
-	TextFg        terminal.RGB
-	TextBg        terminal.RGB
-	CursorFg      terminal.RGB
-	CursorBg      terminal.RGB
-	PlaceholderFg terminal.RGB
-	PrefixFg      terminal.RGB
-	BorderFg      terminal.RGB
+	TextFg        color.RGB
+	TextBg        color.RGB
+	CursorFg      color.RGB
+	CursorBg      color.RGB
+	PlaceholderFg color.RGB
+	PrefixFg      color.RGB
+	BorderFg      color.RGB
 }
 
 // TextField renders text field and returns content height used
@@ -169,3 +170,4 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+

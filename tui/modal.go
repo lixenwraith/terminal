@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
@@ -9,10 +10,10 @@ type ModalOpts struct {
 	Title    string
 	Hint     string // Right-aligned hint text
 	Border   LineType
-	BorderFg terminal.RGB
-	TitleFg  terminal.RGB
-	HintFg   terminal.RGB
-	Bg       terminal.RGB
+	BorderFg color.RGB
+	TitleFg  color.RGB
+	HintFg   color.RGB
+	Bg       color.RGB
 }
 
 // Modal fills region with background, draws border with title/hint, returns content region
@@ -64,3 +65,4 @@ func (r Region) Modal(opts ModalOpts) Region {
 	// Return content region
 	return r.Sub(1, 1, r.W-2, r.H-2)
 }
+

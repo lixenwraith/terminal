@@ -2,6 +2,8 @@ package terminal
 
 import (
 	"bufio"
+
+	"github.com/lixenwraith/color"
 )
 
 // outputBuffer manages double-buffered terminal output with diffing
@@ -17,8 +19,8 @@ type outputBuffer struct {
 	cursorValid bool
 
 	// Style state for coalescing
-	lastFg    RGB
-	lastBg    RGB
+	lastFg    color.RGB
+	lastBg    color.RGB
 	lastAttr  Attr
 	lastValid bool
 }
@@ -251,7 +253,7 @@ func (o *outputBuffer) moveCursorTo(w *bufio.Writer, x, y int) {
 }
 
 // writeStyleCoalesced emits a single combined SGR sequence when style changes
-func (o *outputBuffer) writeStyleCoalesced(w *bufio.Writer, fg, bg RGB, attr Attr) {
+func (o *outputBuffer) writeStyleCoalesced(w *bufio.Writer, fg, bg color.RGB, attr Attr) {
 	// Check what changed
 	fgChanged := !o.lastValid || fg != o.lastFg || (attr&AttrFg256) != (o.lastAttr&AttrFg256)
 	bgChanged := !o.lastValid || bg != o.lastBg || (attr&AttrBg256) != (o.lastAttr&AttrBg256)
@@ -340,7 +342,7 @@ func (o *outputBuffer) writeStyleCoalesced(w *bufio.Writer, fg, bg RGB, attr Att
 }
 
 // writeFgInline writes fg color parameters (no CSI prefix, no 'm' suffix)
-func (o *outputBuffer) writeFgInline(w *bufio.Writer, fg RGB, attr Attr) {
+func (o *outputBuffer) writeFgInline(w *bufio.Writer, fg color.RGB, attr Attr) {
 	w.WriteByte(';')
 	if attr&AttrFg256 != 0 {
 		// 256-color: 38;5;N
@@ -362,7 +364,7 @@ func (o *outputBuffer) writeFgInline(w *bufio.Writer, fg RGB, attr Attr) {
 }
 
 // writeBgInline writes bg color parameters (no CSI prefix, no 'm' suffix)
-func (o *outputBuffer) writeBgInline(w *bufio.Writer, bg RGB, attr Attr) {
+func (o *outputBuffer) writeBgInline(w *bufio.Writer, bg color.RGB, attr Attr) {
 	w.WriteByte(';')
 	if attr&AttrBg256 != 0 {
 		// 256-color: 48;5;N
@@ -384,7 +386,7 @@ func (o *outputBuffer) writeBgInline(w *bufio.Writer, bg RGB, attr Attr) {
 }
 
 // writeFgFull writes complete fg color sequence
-func (o *outputBuffer) writeFgFull(w *bufio.Writer, fg RGB, attr Attr) {
+func (o *outputBuffer) writeFgFull(w *bufio.Writer, fg color.RGB, attr Attr) {
 	if attr&AttrFg256 != 0 {
 		w.Write(csiFg256)
 		writeInt(w, int(fg.R))
@@ -405,7 +407,7 @@ func (o *outputBuffer) writeFgFull(w *bufio.Writer, fg RGB, attr Attr) {
 }
 
 // writeBgFull writes complete bg color sequence
-func (o *outputBuffer) writeBgFull(w *bufio.Writer, bg RGB, attr Attr) {
+func (o *outputBuffer) writeBgFull(w *bufio.Writer, bg color.RGB, attr Attr) {
 	if attr&AttrBg256 != 0 {
 		w.Write(csiBg256)
 		writeInt(w, int(bg.R))
@@ -435,7 +437,7 @@ func (o *outputBuffer) forceFullRedraw() {
 }
 
 // clear writes a clear screen with specified background
-func (o *outputBuffer) clear(bg RGB) {
+func (o *outputBuffer) clear(bg color.RGB) {
 	w := o.writer
 	w.Write(csiSGR0)
 	o.writeBgFull(w, bg, 0)

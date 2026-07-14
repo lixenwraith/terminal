@@ -7,22 +7,23 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
 // Style describes text appearance; zero value is unstyled.
 // Composable: inline.Fg(terminal.Amber).Attr(terminal.AttrBold)
 type Style struct {
-	fg, bg       terminal.RGB
+	fg, bg       color.RGB
 	hasFg, hasBg bool
 	attr         terminal.Attr
 }
 
 // Fg starts a style with foreground color
-func Fg(c terminal.RGB) Style { return Style{fg: c, hasFg: true} }
+func Fg(c color.RGB) Style { return Style{fg: c, hasFg: true} }
 
 // Bg sets background color
-func (s Style) Bg(c terminal.RGB) Style { s.bg, s.hasBg = c, true; return s }
+func (s Style) Bg(c color.RGB) Style { s.bg, s.hasBg = c, true; return s }
 
 // Attr adds attribute bits
 func (s Style) Attr(a terminal.Attr) Style { s.attr |= a; return s }

@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // ToastPosition specifies where toast renders
 type ToastPosition uint8
@@ -46,26 +49,26 @@ var ToastIcons = map[ToastSeverity]rune{
 }
 
 // ToastColors default colors per severity
-var ToastColors = map[ToastSeverity]struct{ Fg, Bg, Icon terminal.RGB }{
+var ToastColors = map[ToastSeverity]struct{ Fg, Bg, Icon color.RGB }{
 	ToastInfo: {
-		Fg:   terminal.RGB{R: 200, G: 200, B: 200},
-		Bg:   terminal.RGB{R: 40, G: 40, B: 50},
-		Icon: terminal.RGB{R: 100, G: 150, B: 255},
+		Fg:   color.RGB{R: 200, G: 200, B: 200},
+		Bg:   color.RGB{R: 40, G: 40, B: 50},
+		Icon: color.RGB{R: 100, G: 150, B: 255},
 	},
 	ToastSuccess: {
-		Fg:   terminal.RGB{R: 220, G: 255, B: 220},
-		Bg:   terminal.RGB{R: 30, G: 60, B: 30},
-		Icon: terminal.RGB{R: 80, G: 220, B: 80},
+		Fg:   color.RGB{R: 220, G: 255, B: 220},
+		Bg:   color.RGB{R: 30, G: 60, B: 30},
+		Icon: color.RGB{R: 80, G: 220, B: 80},
 	},
 	ToastWarning: {
-		Fg:   terminal.RGB{R: 255, G: 240, B: 200},
-		Bg:   terminal.RGB{R: 60, G: 50, B: 20},
-		Icon: terminal.RGB{R: 255, G: 200, B: 60},
+		Fg:   color.RGB{R: 255, G: 240, B: 200},
+		Bg:   color.RGB{R: 60, G: 50, B: 20},
+		Icon: color.RGB{R: 255, G: 200, B: 60},
 	},
 	ToastError: {
-		Fg:   terminal.RGB{R: 255, G: 220, B: 220},
-		Bg:   terminal.RGB{R: 60, G: 25, B: 25},
-		Icon: terminal.RGB{R: 255, G: 80, B: 80},
+		Fg:   color.RGB{R: 255, G: 220, B: 220},
+		Bg:   color.RGB{R: 60, G: 25, B: 25},
+		Icon: color.RGB{R: 255, G: 80, B: 80},
 	},
 }
 
@@ -81,9 +84,9 @@ type ToastOpts struct {
 	Padding    int // Horizontal padding, default 1
 	MarginX    int // Margin from edge for floating positions
 	MarginY    int // Margin from edge for floating positions
-	CustomFg   terminal.RGB
-	CustomBg   terminal.RGB
-	CustomIcon terminal.RGB
+	CustomFg   color.RGB
+	CustomBg   color.RGB
+	CustomIcon color.RGB
 }
 
 // DefaultToastOpts returns sensible defaults
@@ -109,13 +112,13 @@ func (r Region) Toast(opts ToastOpts) Region {
 
 	// Resolve colors
 	fg, bg, iconFg := opts.CustomFg, opts.CustomBg, opts.CustomIcon
-	if fg == (terminal.RGB{}) {
+	if fg == (color.RGB{}) {
 		fg = ToastColors[opts.Severity].Fg
 	}
-	if bg == (terminal.RGB{}) {
+	if bg == (color.RGB{}) {
 		bg = ToastColors[opts.Severity].Bg
 	}
-	if iconFg == (terminal.RGB{}) {
+	if iconFg == (color.RGB{}) {
 		iconFg = ToastColors[opts.Severity].Icon
 	}
 
@@ -218,7 +221,7 @@ func (r Region) Toast(opts ToastOpts) Region {
 	case ToastStyleShadow:
 		// Shadow offset
 		shadowRegion := r.Sub(toastX+1, toastY+1, toastW, toastH)
-		shadowRegion.Fill(terminal.RGB{R: 10, G: 10, B: 15})
+		shadowRegion.Fill(color.RGB{R: 10, G: 10, B: 15})
 		toastRegion.BoxFilled(LineSingle, fg, bg)
 		r.renderToastContent(toastRegion.Inset(1), opts, fg, bg, iconFg, 0)
 	}
@@ -226,7 +229,7 @@ func (r Region) Toast(opts ToastOpts) Region {
 	return toastRegion
 }
 
-func (r Region) renderToastContent(content Region, opts ToastOpts, fg, bg, iconFg terminal.RGB, _ int) {
+func (r Region) renderToastContent(content Region, opts ToastOpts, fg, bg, iconFg color.RGB, _ int) {
 	if content.W < 1 || content.H < 1 {
 		return
 	}
@@ -299,3 +302,4 @@ func (t *ToastState) Show(opts ToastOpts, frames int) {
 	t.FramesLeft = frames
 	t.Visible = true
 }
+

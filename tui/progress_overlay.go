@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // ProgressType specifies progress indicator variant
 type ProgressType uint8
@@ -93,11 +96,11 @@ type ProgressOverlayOpts struct {
 	Width        int     // Overlay width, 0 = auto
 	Cancelable   bool    // Show cancel hint
 	CancelKey    string  // e.g., "Esc"
-	Fg           terminal.RGB
-	Bg           terminal.RGB
-	BarFg        terminal.RGB
-	BarBg        terminal.RGB
-	AccentFg     terminal.RGB // Spinner/highlight color
+	Fg           color.RGB
+	Bg           color.RGB
+	BarFg        color.RGB
+	BarBg        color.RGB
+	AccentFg     color.RGB // Spinner/highlight color
 }
 
 // DefaultProgressOpts returns sensible defaults
@@ -111,11 +114,11 @@ func DefaultProgressOpts(title, message string, ptype ProgressType) ProgressOver
 		BarStyle:     BarStyleBlock,
 		ShowPercent:  true,
 		Width:        40,
-		Fg:           terminal.RGB{R: 220, G: 220, B: 220},
-		Bg:           terminal.RGB{R: 30, G: 30, B: 40},
-		BarFg:        terminal.RGB{R: 80, G: 160, B: 255},
-		BarBg:        terminal.RGB{R: 50, G: 50, B: 60},
-		AccentFg:     terminal.RGB{R: 100, G: 200, B: 255},
+		Fg:           color.RGB{R: 220, G: 220, B: 220},
+		Bg:           color.RGB{R: 30, G: 30, B: 40},
+		BarFg:        color.RGB{R: 80, G: 160, B: 255},
+		BarBg:        color.RGB{R: 50, G: 50, B: 60},
+		AccentFg:     color.RGB{R: 100, G: 200, B: 255},
 	}
 }
 
@@ -169,12 +172,12 @@ func (r Region) ProgressOverlay(opts ProgressOverlayOpts) Region {
 	case ProgressStyleShadow:
 		// Draw shadow first
 		shadow := r.Sub(overlay.X-r.X+1, overlay.Y-r.Y+1, overlayW, overlayH)
-		shadow.Fill(terminal.RGB{R: 10, G: 10, B: 15})
+		shadow.Fill(color.RGB{R: 10, G: 10, B: 15})
 		borderLine = LineSingle
 	case ProgressStyleNeon:
 		borderLine = LineDouble
-		opts.AccentFg = terminal.RGB{R: 0, G: 255, B: 200}
-		opts.BarFg = terminal.RGB{R: 255, G: 0, B: 255}
+		opts.AccentFg = color.RGB{R: 0, G: 255, B: 200}
+		opts.BarFg = color.RGB{R: 255, G: 0, B: 255}
 	case ProgressStyleRetro:
 		borderLine = LineHeavy
 		opts.BarStyle = BarStyleBlock
@@ -242,7 +245,7 @@ func (r Region) ProgressOverlay(opts ProgressOverlayOpts) Region {
 		if opts.CancelKey == "" {
 			hint = "Esc to cancel"
 		}
-		content.TextCenter(y, hint, terminal.RGB{R: 120, G: 120, B: 130}, opts.Bg, terminal.AttrDim)
+		content.TextCenter(y, hint, color.RGB{R: 120, G: 120, B: 130}, opts.Bg, terminal.AttrDim)
 	}
 
 	return overlay
@@ -301,7 +304,7 @@ func (r Region) renderProgressBar(bar Region, opts ProgressOverlayOpts) {
 
 		for x := 0; x < barW; x++ {
 			var ch rune
-			var fg terminal.RGB
+			var fg color.RGB
 			if x < filled {
 				ch = chars[0]
 				fg = opts.BarFg
@@ -334,7 +337,7 @@ func (r Region) renderProgressBar(bar Region, opts ProgressOverlayOpts) {
 
 		for x := 0; x < barW; x++ {
 			var ch rune
-			var fg terminal.RGB
+			var fg color.RGB
 			if x >= pos && x < pos+markerW {
 				ch = chars[0]
 				fg = opts.BarFg
@@ -365,11 +368,11 @@ func (r Region) renderProgressBar(bar Region, opts ProgressOverlayOpts) {
 
 		for x := 0; x < barW; x++ {
 			var ch rune
-			var fg terminal.RGB
+			var fg color.RGB
 			if x < filled {
 				ch = chars[0]
 				// Pulse the color
-				fg = terminal.RGB{
+				fg = color.RGB{
 					R: uint8(float64(opts.BarFg.R) * (0.5 + intensity*0.5)),
 					G: uint8(float64(opts.BarFg.G) * (0.5 + intensity*0.5)),
 					B: uint8(float64(opts.BarFg.B) * (0.5 + intensity*0.5)),
@@ -390,7 +393,7 @@ func (r Region) renderProgressBar(bar Region, opts ProgressOverlayOpts) {
 	// ETA
 	if opts.ShowETA != "" {
 		etaX := bar.W - RuneLen(opts.ShowETA)
-		bar.Text(etaX, 0, opts.ShowETA, terminal.RGB{R: 150, G: 150, B: 160}, opts.Bg, terminal.AttrDim)
+		bar.Text(etaX, 0, opts.ShowETA, color.RGB{R: 150, G: 150, B: 160}, opts.Bg, terminal.AttrDim)
 	}
 }
 
@@ -464,3 +467,4 @@ func (p *ProgressState) Dismiss() {
 func (p *ProgressState) Show() {
 	p.Visible = true
 }
+

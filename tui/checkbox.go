@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
@@ -15,7 +16,7 @@ const (
 )
 
 // Checkbox draws a checkbox indicator
-func (r Region) Checkbox(x, y int, state CheckState, fg terminal.RGB) {
+func (r Region) Checkbox(x, y int, state CheckState, fg color.RGB) {
 	if x < 0 || x+2 >= r.W || y < 0 || y >= r.H {
 		return
 	}
@@ -30,7 +31,8 @@ func (r Region) Checkbox(x, y int, state CheckState, fg terminal.RGB) {
 	case CheckPlus:
 		ch = '+'
 	}
-	r.Cell(x, y, '[', fg, terminal.RGB{}, terminal.AttrNone)
-	r.Cell(x+1, y, ch, fg, terminal.RGB{}, terminal.AttrNone)
-	r.Cell(x+2, y, ']', fg, terminal.RGB{}, terminal.AttrNone)
+	r.Cell(x, y, '[', fg, color.RGB{}, terminal.AttrNone)
+	r.Cell(x+1, y, ch, fg, color.RGB{}, terminal.AttrNone)
+	r.Cell(x+2, y, ']', fg, color.RGB{}, terminal.AttrNone)
 }
+

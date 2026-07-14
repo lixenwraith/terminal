@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
@@ -12,7 +13,7 @@ const (
 )
 
 // Progress draws horizontal progress bar (0.0-1.0)
-func (r Region) Progress(x, y, w int, pct float64, fg, bg terminal.RGB) {
+func (r Region) Progress(x, y, w int, pct float64, fg, bg color.RGB) {
 	if y < 0 || y >= r.H || w <= 0 {
 		return
 	}
@@ -43,7 +44,7 @@ func (r Region) Progress(x, y, w int, pct float64, fg, bg terminal.RGB) {
 }
 
 // ProgressV draws vertical progress bar (fills bottom-up)
-func (r Region) ProgressV(x, y, h int, pct float64, fg, bg terminal.RGB) {
+func (r Region) ProgressV(x, y, h int, pct float64, fg, bg color.RGB) {
 	if x < 0 || x >= r.W || h <= 0 {
 		return
 	}
@@ -72,7 +73,7 @@ func (r Region) ProgressV(x, y, h int, pct float64, fg, bg terminal.RGB) {
 }
 
 // Spinner draws spinner character based on frame counter
-func (r Region) Spinner(x, y int, frame int, fg terminal.RGB) {
+func (r Region) Spinner(x, y int, frame int, fg color.RGB) {
 	if x < 0 || x >= r.W || y < 0 || y >= r.H {
 		return
 	}
@@ -80,11 +81,11 @@ func (r Region) Spinner(x, y int, frame int, fg terminal.RGB) {
 	if idx < 0 {
 		idx = -idx
 	}
-	r.Cell(x, y, spinnerFrames[idx], fg, terminal.RGB{}, terminal.AttrNone)
+	r.Cell(x, y, spinnerFrames[idx], fg, color.RGB{}, terminal.AttrNone)
 }
 
 // Gauge draws labeled gauge with percentage
-func (r Region) Gauge(x, y, w int, value, max int, fg, bg terminal.RGB) {
+func (r Region) Gauge(x, y, w int, value, max int, fg, bg color.RGB) {
 	if w < 5 || y < 0 || y >= r.H {
 		return
 	}
@@ -122,3 +123,4 @@ func (r Region) Gauge(x, y, w int, value, max int, fg, bg terminal.RGB) {
 	}
 	r.Text(x+2+barW, y, label, fg, bg, terminal.AttrNone)
 }
+

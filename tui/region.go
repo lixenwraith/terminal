@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // Region represents a rectangular area within a cell buffer
 // All coordinates are relative to the region's origin
@@ -63,7 +66,7 @@ func (r Region) Inset(n int) Region {
 }
 
 // Cell sets a single cell with bounds checking
-func (r Region) Cell(x, y int, ch rune, fg, bg terminal.RGB, attr terminal.Attr) {
+func (r Region) Cell(x, y int, ch rune, fg, bg color.RGB, attr terminal.Attr) {
 	if x < 0 || x >= r.W || y < 0 || y >= r.H {
 		return
 	}
@@ -83,17 +86,17 @@ func (r Region) Cell(x, y int, ch rune, fg, bg terminal.RGB, attr terminal.Attr)
 }
 
 // Fill fills entire region with background color
-func (r Region) Fill(bg terminal.RGB) {
+func (r Region) Fill(bg color.RGB) {
 	for y := 0; y < r.H; y++ {
 		for x := 0; x < r.W; x++ {
-			r.Cell(x, y, ' ', terminal.RGB{}, bg, terminal.AttrNone)
+			r.Cell(x, y, ' ', color.RGB{}, bg, terminal.AttrNone)
 		}
 	}
 }
 
 // Clear fills region with spaces and zero colors
 func (r Region) Clear() {
-	r.Fill(terminal.RGB{})
+	r.Fill(color.RGB{})
 }
 
 // Width returns region width
@@ -110,3 +113,4 @@ func (r Region) Height() int {
 func (r Region) Bounds() (x, y, w, h int) {
 	return r.X, r.Y, r.W, r.H
 }
+

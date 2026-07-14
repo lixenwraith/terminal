@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // ExpandIcon chars
 const (
@@ -30,20 +33,20 @@ type TreeNode struct {
 	Key        string // Unique identifier for expansion state
 	Label      string // Display text
 	Icon       rune   // Custom icon, 0 = auto (▶/▼ for expandable, • for leaf)
-	IconFg     terminal.RGB
+	IconFg     color.RGB
 	Expandable bool       // Has children
 	Expanded   bool       // Currently expanded
 	Depth      int        // Nesting level (0 = root)
 	Check      CheckState // Optional checkbox, CheckNone to skip
-	CheckFg    terminal.RGB
+	CheckFg    color.RGB
 	Style      Style // Text styling
 	IsLast     bool  // Last sibling at this depth (for tree lines)
 	Data       any   // Application payload
 
-	Suffix      string       // Secondary text after label (e.g., "(5 files)")
-	SuffixStyle Style        // Styling for suffix, zero = dimmed version of Style
-	Badge       rune         // Icon between checkbox and label (e.g., '★'), 0 = none
-	BadgeFg     terminal.RGB // Badge color
+	Suffix      string    // Secondary text after label (e.g., "(5 files)")
+	SuffixStyle Style     // Styling for suffix, zero = dimmed version of Style
+	Badge       rune      // Icon between checkbox and label (e.g., '★'), 0 = none
+	BadgeFg     color.RGB // Badge color
 }
 
 // ancestorHasMoreSiblings checks if there are more nodes at given depth after idx
@@ -59,12 +62,12 @@ func (r Region) ancestorHasMoreSiblings(nodes []TreeNode, idx, depth int) bool {
 
 // TreeOpts configures tree rendering
 type TreeOpts struct {
-	CursorBg    terminal.RGB
-	DefaultBg   terminal.RGB
+	CursorBg    color.RGB
+	DefaultBg   color.RGB
 	IndentWidth int // Cells per depth, default 2
 	IconWidth   int // Width for icon column, default 2
 	LineMode    TreeLineMode
-	LineFg      terminal.RGB
+	LineFg      color.RGB
 }
 
 // DefaultTreeOpts returns sensible defaults
@@ -73,7 +76,7 @@ func DefaultTreeOpts() TreeOpts {
 		IndentWidth: 2,
 		IconWidth:   2,
 		LineMode:    TreeLinesNone,
-		LineFg:      terminal.RGB{R: 80, G: 80, B: 100},
+		LineFg:      color.RGB{R: 80, G: 80, B: 100},
 	}
 }
 
@@ -94,7 +97,7 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 	}
 
 	lineFg := opts.LineFg
-	if lineFg == (terminal.RGB{}) {
+	if lineFg == (color.RGB{}) {
 		lineFg = DefaultTheme.Border
 	}
 
@@ -114,7 +117,7 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 		}
 
 		for x := 0; x < r.W; x++ {
-			r.Cell(x, y, ' ', terminal.RGB{}, bg, terminal.AttrNone)
+			r.Cell(x, y, ' ', color.RGB{}, bg, terminal.AttrNone)
 		}
 
 		x := 0
@@ -139,7 +142,7 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 				icon = IconBullet
 			}
 		}
-		if iconFg == (terminal.RGB{}) {
+		if iconFg == (color.RGB{}) {
 			iconFg = lineFg
 		}
 		if x < r.W {
@@ -148,10 +151,10 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 		x += iconW
 
 		// Checkbox
-		if node.Check != CheckNone || node.CheckFg != (terminal.RGB{}) {
+		if node.Check != CheckNone || node.CheckFg != (color.RGB{}) {
 			if x+3 <= r.W {
 				checkFg := node.CheckFg
-				if checkFg == (terminal.RGB{}) {
+				if checkFg == (color.RGB{}) {
 					checkFg = node.Style.Fg
 				}
 				var ch rune
@@ -176,7 +179,7 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 		if node.Badge != 0 {
 			if x < r.W {
 				badgeFg := node.BadgeFg
-				if badgeFg == (terminal.RGB{}) {
+				if badgeFg == (color.RGB{}) {
 					badgeFg = node.Style.Fg
 				}
 				r.Cell(x, y, node.Badge, badgeFg, bg, terminal.AttrNone)
@@ -186,7 +189,7 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 
 		// Label
 		style := node.Style
-		if style.Bg == (terminal.RGB{}) {
+		if style.Bg == (color.RGB{}) {
 			style.Bg = bg
 		}
 
@@ -214,15 +217,15 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 		// Suffix
 		if suffix != "" {
 			suffixStyle := node.SuffixStyle
-			if suffixStyle.Fg == (terminal.RGB{}) {
+			if suffixStyle.Fg == (color.RGB{}) {
 				// Default: dimmed version of label style
-				suffixStyle.Fg = terminal.RGB{
+				suffixStyle.Fg = color.RGB{
 					R: node.Style.Fg.R / 2,
 					G: node.Style.Fg.G / 2,
 					B: node.Style.Fg.B / 2,
 				}
 			}
-			if suffixStyle.Bg == (terminal.RGB{}) {
+			if suffixStyle.Bg == (color.RGB{}) {
 				suffixStyle.Bg = bg
 			}
 			r.TextStyled(x, y, suffix, suffixStyle)
@@ -235,7 +238,7 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 }
 
 // renderTreeLines draws connector lines for tree structure, returns x position after lines
-func (r Region) renderTreeLines(y, startX int, node TreeNode, nodes []TreeNode, idx, scroll, indentW int, fg terminal.RGB, bg terminal.RGB) int {
+func (r Region) renderTreeLines(y, startX int, node TreeNode, nodes []TreeNode, idx, scroll, indentW int, fg color.RGB, bg color.RGB) int {
 	x := startX
 
 	for d := 0; d < node.Depth; d++ {
@@ -335,3 +338,4 @@ func FindPrevSiblingIndex(nodes []TreeNode, idx int) int {
 	}
 	return -1
 }
+

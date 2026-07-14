@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // BarSection represents one segment of a status bar
 type BarSection struct {
@@ -25,7 +28,7 @@ const (
 type BarOpts struct {
 	Separator string // Between sections, default " │ "
 	SepStyle  Style  // Separator styling
-	Bg        terminal.RGB
+	Bg        color.RGB
 	Align     BarAlign
 	Padding   int // Left/right padding, default 1
 }
@@ -34,7 +37,7 @@ type BarOpts struct {
 func DefaultBarOpts() BarOpts {
 	return BarOpts{
 		Separator: " │ ",
-		SepStyle:  Style{Fg: terminal.RGB{R: 80, G: 80, B: 100}},
+		SepStyle:  Style{Fg: color.RGB{R: 80, G: 80, B: 100}},
 		Padding:   1,
 		Align:     BarAlignRight,
 	}
@@ -55,7 +58,7 @@ func (r Region) StatusBar(y int, sections []BarSection, opts BarOpts) {
 
 	// Fill background
 	for x := 0; x < r.W; x++ {
-		r.Cell(x, y, ' ', terminal.RGB{}, opts.Bg, terminal.AttrNone)
+		r.Cell(x, y, ' ', color.RGB{}, opts.Bg, terminal.AttrNone)
 	}
 
 	sepLen := RuneLen(opts.Separator)
@@ -193,7 +196,7 @@ func truncateSections(sections []BarSection, widths []int, sepLen, availW int) (
 }
 
 // QuickStatusBar renders simple label:value pairs right-aligned
-func (r Region) QuickStatusBar(y int, pairs [][2]string, labelFg, valueFg, bg terminal.RGB) {
+func (r Region) QuickStatusBar(y int, pairs [][2]string, labelFg, valueFg, bg color.RGB) {
 	sections := make([]BarSection, len(pairs))
 	for i, p := range pairs {
 		sections[i] = BarSection{

@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/lixenwraith/terminal"
+import (
+	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal"
+)
 
 // FormField pairs a label with an editable text field
 type FormField struct {
@@ -103,25 +106,25 @@ type FormOpts struct {
 
 // FormStyle defines form colors
 type FormStyle struct {
-	LabelFg  terminal.RGB
-	FieldFg  terminal.RGB
-	FieldBg  terminal.RGB
-	FocusBg  terminal.RGB
-	CursorFg terminal.RGB
-	CursorBg terminal.RGB
-	Bg       terminal.RGB
+	LabelFg  color.RGB
+	FieldFg  color.RGB
+	FieldBg  color.RGB
+	FocusBg  color.RGB
+	CursorFg color.RGB
+	CursorBg color.RGB
+	Bg       color.RGB
 }
 
 // DefaultFormStyle returns default form colors
 func DefaultFormStyle() FormStyle {
 	return FormStyle{
-		LabelFg:  terminal.RGB{R: 150, G: 150, B: 180},
-		FieldFg:  terminal.RGB{R: 220, G: 220, B: 220},
-		FieldBg:  terminal.RGB{R: 35, G: 35, B: 45},
-		FocusBg:  terminal.RGB{R: 45, G: 45, B: 60},
-		CursorFg: terminal.RGB{R: 0, G: 0, B: 0},
-		CursorBg: terminal.RGB{R: 200, G: 200, B: 200},
-		Bg:       terminal.RGB{R: 25, G: 25, B: 35},
+		LabelFg:  color.RGB{R: 150, G: 150, B: 180},
+		FieldFg:  color.RGB{R: 220, G: 220, B: 220},
+		FieldBg:  color.RGB{R: 35, G: 35, B: 45},
+		FocusBg:  color.RGB{R: 45, G: 45, B: 60},
+		CursorFg: color.RGB{R: 0, G: 0, B: 0},
+		CursorBg: color.RGB{R: 200, G: 200, B: 200},
+		Bg:       color.RGB{R: 25, G: 25, B: 35},
 	}
 }
 
@@ -226,3 +229,4 @@ func (r Region) Form(state *FormState, opts FormOpts) int {
 
 	return y
 }
+

@@ -1,18 +1,19 @@
 package tui
 
 import (
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
 
 // InputOpts configures single-line input field
 type InputOpts struct {
 	Label    string
-	LabelFg  terminal.RGB
+	LabelFg  color.RGB
 	Text     string
 	Cursor   int // Cursor position in text (rune index)
-	CursorBg terminal.RGB
-	TextFg   terminal.RGB
-	Bg       terminal.RGB
+	CursorBg color.RGB
+	TextFg   color.RGB
+	Bg       color.RGB
 }
 
 // Input renders labeled text input field on row y, handling cursor display and horizontal scrolling
@@ -76,3 +77,4 @@ func (r Region) Input(y int, opts InputOpts) {
 		r.Cell(x+cursor-scroll, y, ' ', opts.TextFg, opts.CursorBg, terminal.AttrNone)
 	}
 }
+

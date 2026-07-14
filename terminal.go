@@ -5,6 +5,8 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"github.com/lixenwraith/color"
 )
 
 // Attr represents text attributes (bitmask)
@@ -28,8 +30,8 @@ const AttrStyle Attr = AttrBold | AttrDim | AttrItalic | AttrUnderline | AttrBli
 // Cell represents a single terminal cell
 type Cell struct {
 	Rune  rune
-	Fg    RGB
-	Bg    RGB
+	Fg    color.RGB
+	Bg    color.RGB
 	Attrs Attr
 }
 
@@ -55,7 +57,7 @@ type Terminal interface {
 	Flush(cells []Cell, width, height int)
 
 	// Clear fills screen with specified background color
-	Clear(bg RGB)
+	Clear(bg color.RGB)
 
 	// SetCursorVisible shows/hides cursor
 	SetCursorVisible(visible bool)
@@ -172,8 +174,13 @@ func (t *termImpl) Init() error {
 	// Invisible cursor
 	t.cursorVisible.Store(false)
 
+	// Build the LUT at startup, not on the first frame under t.mu
+	if t.output.colorMode == ColorMode256 {
+		WarmPalette256()
+	}
+
 	// Clear screen
-	t.output.clear(RGBBlack)
+	t.output.clear(color.Black)
 
 	// Start input reader
 	t.input.start()
@@ -259,7 +266,7 @@ func (t *termImpl) Flush(cells []Cell, width, height int) {
 }
 
 // Clear fills screen with background color
-func (t *termImpl) Clear(bg RGB) {
+func (t *termImpl) Clear(bg color.RGB) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -336,7 +343,7 @@ func (t *termImpl) Sync() {
 
 	// Clear terminal before full redraw
 	// Diff-based rendering assumes physical terminal matches front buffer state
-	t.output.clear(RGBBlack)
+	t.output.clear(color.Black)
 	t.output.forceFullRedraw()
 }
 
