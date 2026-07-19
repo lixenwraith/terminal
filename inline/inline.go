@@ -1,5 +1,3 @@
-//go:build unix
-
 // Package inline renders styled text and in-place progress in the normal
 // terminal scrollback: no raw mode, no alternate screen, no input handling,
 // no cursor hiding. Intended for CLI tools that want color and live status
@@ -13,7 +11,7 @@
 // unless overridden with SetColor(true), Log and Done print plainly.
 //
 // Width is measured in runes (unicode/utf8); wide and combining characters
-// are not width-aware — same documented limitation as tui.
+// are not width-aware.
 package inline
 
 import (
@@ -23,7 +21,15 @@ import (
 	"os"
 	"sync"
 
-	"github.com/lixenwraith/terminal"
+	"github.com/lixenwraith/color"
+)
+
+// Internal color capability representation
+type colorMode uint8
+
+const (
+	colorMode256 colorMode = iota
+	colorModeTrueColor
 )
 
 // Printer manages styled output and the live block. Safe for concurrent use.
@@ -32,25 +38,25 @@ type Printer struct {
 	w     *bufio.Writer
 	tty   *os.File // non-nil when output is a terminal
 	color bool
-	mode  terminal.ColorMode
+	mode  colorMode
 	live  []string // desired live block content
 	drawn int      // lines currently on screen (may be clamped below len(live))
 }
 
-// New creates a Printer for w. Terminal detection via WindowSize probe;
+// New creates a Printer for w. Terminal detection via size probe;
 // styling defaults on for terminals with NO_COLOR unset.
 func New(w io.Writer) *Printer {
 	p := &Printer{w: bufio.NewWriter(w)}
 	if f, isFile := w.(*os.File); isFile {
-		if _, _, ok := terminal.WindowSize(f); ok {
+		if _, _, ok := windowSize(f); ok {
 			p.tty = f
 		}
 	}
 	p.color = p.tty != nil && os.Getenv("NO_COLOR") == ""
-	p.mode = terminal.DetectColorMode()
+	p.mode = detectColorMode()
 	// Keep the LUT build out of the first Paint call
-	if p.color && p.mode == terminal.ColorMode256 {
-		terminal.WarmPalette256()
+	if p.color && p.mode == colorMode256 {
+		color.WarmXterm256()
 	}
 	return p
 }
@@ -66,7 +72,7 @@ func (p *Printer) SetColor(on bool) {
 // Size returns terminal dimensions, 80×24 when unknown
 func (p *Printer) Size() (w, h int) {
 	if p.tty != nil {
-		if w, h, ok := terminal.WindowSize(p.tty); ok {
+		if w, h, ok := windowSize(p.tty); ok {
 			return w, h
 		}
 	}

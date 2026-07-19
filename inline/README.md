@@ -6,8 +6,8 @@ keeps owning the terminal. Intended for CLI tools (package managers, service
 tooling, build scripts) that want color and live status without a full-screen
 TUI.
 
-Unix only (`//go:build unix`). Depends on the parent `terminal` package for
-color types, capability detection, and RGB → 256 mapping.
+Cross-platform (Unix, Windows). Depends only on the `color` package for
+24-bit RGB inputs and 256-color automatic degradation.
 
 ## Model
 
@@ -43,17 +43,17 @@ Value type, zero value is unstyled, builder-composable:
 
 | Function | Description |
 |---|---|
-| `Fg(c terminal.RGB) Style` | Starts a style with foreground color. |
-| `(s Style) Bg(c terminal.RGB) Style` | Adds background color. |
-| `(s Style) Attr(a terminal.Attr) Style` | Adds attribute bits (`AttrBold`, `AttrDim`, ...). |
+| `Fg(c color.RGB) Style` | Starts a style with foreground color. |
+| `(s Style) Bg(c color.RGB) Style` | Adds background color. |
+| `(s Style) Bold() Style` | Adds bold attribute (also: `Dim`, `Italic`, `Underline`, `Blink`, `Reverse`). |
 
 ```go
-warn := inline.Fg(terminal.Amber).Attr(terminal.AttrBold)
+warn := inline.Fg(color.Amber).Bold()
 p.Log("%s low disk space", p.Paint("warning:", warn))
 ```
 
 True color terminals get `38;2;R;G;B`; 256-color terminals get `38;5;N` via
-Redmean mapping — same degradation path as the parent package.
+Redmean mapping dynamically handled by the `color` package.
 
 ### Progress helpers
 
@@ -90,16 +90,16 @@ import (
 	"os"
 	"time"
 
-	"github.com/lixenwraith/terminal"
+	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal/inline"
 )
 
 func main() {
 	p := inline.New(os.Stdout)
 
-	name := inline.Fg(terminal.LightSkyBlue).Attr(terminal.AttrBold)
-	okSt := inline.Fg(terminal.LimeGreen).Attr(terminal.AttrBold)
-	dim := inline.Fg(terminal.IronGray)
+	name := inline.Fg(color.LightSkyBlue).Bold()
+	okSt := inline.Fg(color.LimeGreen).Bold()
+	dim := inline.Fg(color.IronGray)
 
 	pkgs := []string{"openssl", "zlib", "curl", "git", "go"}
 	frame := 0
@@ -123,14 +123,10 @@ func main() {
 }
 ```
 
-Run in a terminal: the two-line status block animates in place while
-completion lines accumulate above it. Piped (`go run . | cat`): only the
-completion lines and the final summary appear, unstyled.
-
 ## Notes
 
 - Width is measured in runes (`unicode/utf8`); East Asian wide characters and
-  combining marks are not width-aware — same limitation as `tui`.
+  combining marks are not width-aware.
 - Live block lines must occupy one visual row each: no `\n`, tabs, or control
   characters. Lines are truncated to terminal width automatically; embedded
   SGR from `Paint` is preserved through truncation.
@@ -139,3 +135,4 @@ completion lines and the final summary appear, unstyled.
   the format string.
 - Ctrl-C mid-update leaves the live block on screen but the terminal in a
   normal state — no raw mode or screen buffer to restore.
+

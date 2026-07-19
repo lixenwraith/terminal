@@ -1,5 +1,3 @@
-//go:build unix
-
 package inline
 
 import "strings"
@@ -36,7 +34,7 @@ func Bar(width int, pct float64, chars [3]rune) string {
 	return b.String()
 }
 
-// Braille frames; intentionally duplicated from tui (no tui dependency)
+// Braille frames; standard monotonic iteration.
 var spinnerFrames = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // Spinner returns the frame for a monotonic counter

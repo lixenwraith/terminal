@@ -1,5 +1,3 @@
-//go:build unix
-
 package inline
 
 import (
@@ -8,15 +6,27 @@ import (
 	"unicode/utf8"
 
 	"github.com/lixenwraith/color"
-	"github.com/lixenwraith/terminal"
+)
+
+// Attribute represents visual text modifiers for inline styling
+type Attribute uint8
+
+const (
+	AttributeNone Attribute = 0
+	Bold          Attribute = 1 << 0
+	Dim           Attribute = 1 << 1
+	Italic        Attribute = 1 << 2
+	Underline     Attribute = 1 << 3
+	Blink         Attribute = 1 << 4
+	Reverse       Attribute = 1 << 5
 )
 
 // Style describes text appearance; zero value is unstyled.
-// Composable: inline.Fg(terminal.Amber).Attr(terminal.AttrBold)
+// Composable: inline.Fg(color.Amber).Bold().Underline()
 type Style struct {
 	fg, bg       color.RGB
 	hasFg, hasBg bool
-	attr         terminal.Attr
+	attr         Attribute
 }
 
 // Fg starts a style with foreground color
@@ -25,8 +35,23 @@ func Fg(c color.RGB) Style { return Style{fg: c, hasFg: true} }
 // Bg sets background color
 func (s Style) Bg(c color.RGB) Style { s.bg, s.hasBg = c, true; return s }
 
-// Attr adds attribute bits
-func (s Style) Attr(a terminal.Attr) Style { s.attr |= a; return s }
+// Bold applies the bold attribute
+func (s Style) Bold() Style { s.attr |= Bold; return s }
+
+// Dim applies the dim/faint attribute
+func (s Style) Dim() Style { s.attr |= Dim; return s }
+
+// Italic applies the italic attribute
+func (s Style) Italic() Style { s.attr |= Italic; return s }
+
+// Underline applies the underline attribute
+func (s Style) Underline() Style { s.attr |= Underline; return s }
+
+// Blink applies the blink attribute
+func (s Style) Blink() Style { s.attr |= Blink; return s }
+
+// Reverse applies the reverse video attribute
+func (s Style) Reverse() Style { s.attr |= Reverse; return s }
 
 // Paint returns s styled for the detected terminal, unchanged when color
 // is disabled. Composes with Log: p.Log("%s %s", p.Paint("ok", st), name)
@@ -44,36 +69,35 @@ func (p *Printer) Paint(s string, st Style) string {
 func (p *Printer) writeSGR(b *strings.Builder, s Style) {
 	b.WriteString("\x1b[0")
 	for _, m := range [...]struct {
-		bit  terminal.Attr
+		bit  Attribute
 		code string
 	}{
-		{terminal.AttrBold, ";1"}, {terminal.AttrDim, ";2"},
-		{terminal.AttrItalic, ";3"}, {terminal.AttrUnderline, ";4"},
-		{terminal.AttrBlink, ";5"}, {terminal.AttrReverse, ";7"},
+		{Bold, ";1"}, {Dim, ";2"},
+		{Italic, ";3"}, {Underline, ";4"},
+		{Blink, ";5"}, {Reverse, ";7"},
 	} {
 		if s.attr&m.bit != 0 {
 			b.WriteString(m.code)
 		}
 	}
 	if s.hasFg {
-		if p.mode == terminal.ColorModeTrueColor {
+		if p.mode == colorModeTrueColor {
 			fmt.Fprintf(b, ";38;2;%d;%d;%d", s.fg.R, s.fg.G, s.fg.B)
 		} else {
-			fmt.Fprintf(b, ";38;5;%d", terminal.RGBTo256(s.fg))
+			fmt.Fprintf(b, ";38;5;%d", color.RGBTo256(s.fg))
 		}
 	}
 	if s.hasBg {
-		if p.mode == terminal.ColorModeTrueColor {
+		if p.mode == colorModeTrueColor {
 			fmt.Fprintf(b, ";48;2;%d;%d;%d", s.bg.R, s.bg.G, s.bg.B)
 		} else {
-			fmt.Fprintf(b, ";48;5;%d", terminal.RGBTo256(s.bg))
+			fmt.Fprintf(b, ";48;5;%d", color.RGBTo256(s.bg))
 		}
 	}
 	b.WriteByte('m')
 }
 
 // --- Width handling (internal, rune-count semantics) ---
-// Handles only 'm'-terminated escapes — this package's own SGR output.
 
 // visibleLen counts runes excluding SGR sequences
 func visibleLen(s string) int {
