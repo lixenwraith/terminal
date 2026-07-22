@@ -28,9 +28,7 @@ func (r Region) Pane(opts PaneOpts) Region {
 	r.Box(opts.Border, opts.BorderFg)
 
 	// Title on top edge
-	headerH := 0
 	if opts.Title != "" {
-		headerH = 1
 		title := " " + opts.Title + " "
 		if RuneLen(title) > r.W-4 {
 			title = Truncate(title, r.W-4)
@@ -44,8 +42,8 @@ func (r Region) Pane(opts PaneOpts) Region {
 		}
 	}
 
-	// Return content region (inside border, below title)
-	return r.Sub(1, 1+headerH, r.W-2, r.H-2-headerH)
+	// Content region is everything inside the border. The title sits ON the border row.
+	return r.Sub(1, 1, r.W-2, r.H-2)
 }
 
 // TitledPane fills region with background, draws centered title at top, returns content region
@@ -68,4 +66,3 @@ func (r Region) TitledPaneFocused(title string, titleFg, bg, focusBg color.RGB, 
 	}
 	return r.TitledPane(title, titleFg, bg)
 }
-

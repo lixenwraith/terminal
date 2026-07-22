@@ -129,7 +129,15 @@ func (r Region) Table(headers []string, rows [][]string, opts TableOpts) {
 }
 
 // renderTableRow renders a single table row
+// The row is cleared to style.Bg across the full region width first, so
+// alternating-row backgrounds render as continuous bands rather than only
+// under glyphs. A zero style.Bg inherits the underlying background.
 func (r Region) renderTableRow(y int, cells []string, widths []int, aligns []Align, sep rune, style Style) {
+	// Clear row with row background (full width, List-consistent banding)
+	for cx := 0; cx < r.W; cx++ {
+		r.Cell(cx, y, ' ', style.Fg, style.Bg, terminal.AttrNone)
+	}
+
 	x := 0
 	for i, w := range widths {
 		if x >= r.W {
@@ -178,3 +186,4 @@ func (r Region) renderTableRow(y int, cells []string, widths []int, aligns []Ali
 		}
 	}
 }
+

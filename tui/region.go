@@ -65,7 +65,11 @@ func (r Region) Inset(n int) Region {
 	return r.Sub(n, n, r.W-2*n, r.H-2*n)
 }
 
-// Cell sets a single cell with bounds checking
+// Cell sets a single cell with bounds checking.
+// A zero-value bg (color.RGB{}) is transparent: the existing cell's
+// background is preserved. Establish a base background first (Fill, or
+// pre-initialized cell buffer). For a literal black background use
+// CellOpaque or Fill(color.RGB{}).
 func (r Region) Cell(x, y int, ch rune, fg, bg color.RGB, attr terminal.Attr) {
 	if x < 0 || x >= r.W || y < 0 || y >= r.H {
 		return
@@ -81,15 +85,39 @@ func (r Region) Cell(x, y int, ch rune, fg, bg color.RGB, attr terminal.Attr) {
 	idx := absY*r.TotalW + absX
 	// Single bounds check for the backing slice
 	if uint(idx) < uint(len(r.Cells)) {
+		if bg == (color.RGB{}) {
+			bg = r.Cells[idx].Bg // transparent: inherit current background
+		}
 		r.Cells[idx] = terminal.Cell{Rune: ch, Fg: fg, Bg: bg, Attrs: attr}
 	}
 }
 
-// Fill fills entire region with background color
+// CellOpaque sets a single cell writing bg verbatim, including zero (black).
+// Used by base-layer operations (Fill) that must be able to write any color.
+func (r Region) CellOpaque(x, y int, ch rune, fg, bg color.RGB, attr terminal.Attr) {
+	if x < 0 || x >= r.W || y < 0 || y >= r.H {
+		return
+	}
+	absX := r.X + x
+	absY := r.Y + y
+
+	if uint(absX) >= uint(r.TotalW) {
+		return
+	}
+
+	idx := absY*r.TotalW + absX
+	if uint(idx) < uint(len(r.Cells)) {
+		r.Cells[idx] = terminal.Cell{Rune: ch, Fg: fg, Bg: bg, Attrs: attr}
+	}
+}
+
+// Fill fills entire region with background color.
+// Opaque by definition: Fill establishes the base layer, so bg is written
+// verbatim (including zero/black) rather than treated as transparent.
 func (r Region) Fill(bg color.RGB) {
 	for y := 0; y < r.H; y++ {
 		for x := 0; x < r.W; x++ {
-			r.Cell(x, y, ' ', color.RGB{}, bg, terminal.AttrNone)
+			r.CellOpaque(x, y, ' ', color.RGB{}, bg, terminal.AttrNone)
 		}
 	}
 }
@@ -113,4 +141,3 @@ func (r Region) Height() int {
 func (r Region) Bounds() (x, y, w, h int) {
 	return r.X, r.Y, r.W, r.H
 }
-
