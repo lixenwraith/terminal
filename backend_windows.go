@@ -131,7 +131,7 @@ func (b *windowsBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("WaitForSingleObject: %w", err)
 		}
-		if ev == windows.WAIT_TIMEOUT {
+		if ev == uint32(windows.WAIT_TIMEOUT) {
 			// Mirrors unix poll timeout: lets readLoop emit pending standalone ESC
 			return nil, nil
 		}
