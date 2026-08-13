@@ -16,7 +16,8 @@ type MasonryLayout struct {
 // MasonryOpts configures masonry layout
 type MasonryOpts struct {
 	Columns     int
-	Gap         int
+	GapX        int // Columns between masonry columns
+	GapY        int // Rows between stacked items
 	MinColW     int
 	Breakpoints map[int]int
 }
@@ -24,7 +25,8 @@ type MasonryOpts struct {
 // DefaultMasonryOpts returns sensible defaults
 func DefaultMasonryOpts() MasonryOpts {
 	return MasonryOpts{
-		Gap:     1,
+		GapX:    2,
+		GapY:    1,
 		MinColW: 30,
 		Breakpoints: map[int]int{
 			140: 4,
@@ -54,15 +56,10 @@ func (m *MasonryState) CalculateLayout(items []MasonryItem, width int, opts Maso
 		cols = m.autoColumns(width, opts)
 	}
 
-	gap := opts.Gap
-	if gap < 0 {
-		gap = 1
-	}
+	gapX := max(opts.GapX, 0)
+	gapY := max(opts.GapY, 0)
 
-	colW := (width - (cols-1)*gap) / cols
-	if colW < 1 {
-		colW = 1
-	}
+	colW := max((width-(cols-1)*gapX)/cols, 1)
 
 	m.Layouts = make([]MasonryLayout, 0, len(items))
 	colHeights := make([]int, cols)
@@ -77,7 +74,7 @@ func (m *MasonryState) CalculateLayout(items []MasonryItem, width int, opts Maso
 			}
 		}
 
-		x := minCol * (colW + gap)
+		x := minCol * (colW + gapX)
 		y := colHeights[minCol]
 
 		m.Layouts = append(m.Layouts, MasonryLayout{
@@ -85,7 +82,7 @@ func (m *MasonryState) CalculateLayout(items []MasonryItem, width int, opts Maso
 			Item: item,
 		})
 
-		colHeights[minCol] += item.Height + gap
+		colHeights[minCol] += item.Height + gapY
 	}
 
 	totalH := 0
@@ -95,7 +92,7 @@ func (m *MasonryState) CalculateLayout(items []MasonryItem, width int, opts Maso
 		}
 	}
 	if totalH > 0 {
-		totalH -= gap
+		totalH -= gapY
 	}
 
 	m.Viewport.ContentH = totalH
@@ -114,10 +111,7 @@ func (m *MasonryState) autoColumns(width int, opts MasonryOpts) int {
 		return best
 	}
 
-	cols := width / opts.MinColW
-	if cols < 1 {
-		cols = 1
-	}
+	cols := max(width/opts.MinColW, 1)
 	return cols
 }
 

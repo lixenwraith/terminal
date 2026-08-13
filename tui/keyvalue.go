@@ -4,82 +4,57 @@ import (
 	"github.com/lixenwraith/terminal"
 )
 
-// KeyValue renders right-aligned key, separator, left-aligned value on row
-// Key width auto-sizes based on content, capped at 40% of region width
-// Value gets remainder, minimum 30% of region width
+// keyValueSplit divides a row between the key and value columns, excluding the
+// separator. Each column takes the width it needs and yields only when that
+// would push the other below a third of the row.
+func keyValueSplit(width, keyLen, valLen int) (keyW, valW int) {
+	avail := width - 1 // Separator column
+	if avail < 2 {
+		return 1, 1
+	}
+	third := max(avail/3, 1)
+
+	keyW = max(keyLen, 1)
+	if valFloor := min(valLen, third); avail-keyW < valFloor {
+		keyW = avail - valFloor
+	}
+	keyW = min(max(keyW, min(keyLen, third)), avail-1)
+	return keyW, avail - keyW
+}
+
+// KeyValue renders right-aligned key, separator and left-aligned value on row y,
+// sizing the key column to this row alone
 func (r Region) KeyValue(y int, key, value string, keyStyle, valStyle Style, sep rune) {
+	r.KeyValueColumn(y, 0, key, value, keyStyle, valStyle, sep)
+}
+
+// KeyValueColumn renders a key-value row against an explicit key column, so a
+// set of rows aligns on the separator; keyW <= 0 sizes the column to this row
+func (r Region) KeyValueColumn(y, keyW int, key, value string, keyStyle, valStyle Style, sep rune) {
 	if y < 0 || y >= r.H || r.W < 3 {
 		return
 	}
 
-	keyLen := RuneLen(key)
-
-	// Dynamic allocation: key gets what it needs up to 40%
-	maxKeyW := (r.W * 2) / 5  // 40%
-	minValW := (r.W * 3) / 10 // 30%
-
-	keyW := keyLen
-	if keyW > maxKeyW {
-		keyW = maxKeyW
-	}
-	if keyW < 1 {
-		keyW = 1
+	var valW int
+	if keyW <= 0 {
+		keyW, valW = keyValueSplit(r.W, RuneLen(key), RuneLen(value))
+	} else {
+		keyW = min(max(keyW, 1), r.W-2)
+		valW = r.W - keyW - 1
 	}
 
-	valW := r.W - keyW - 1 // -1 for separator
-	if valW < minValW && r.W > minValW+2 {
-		// Reclaim from key to meet minimum value width
-		valW = minValW
-		keyW = r.W - valW - 1
-		if keyW < 1 {
-			keyW = 1
-			valW = r.W - 2
-		}
-	}
-	if valW < 1 {
-		valW = 1
-	}
+	key = Truncate(key, keyW)
+	value = Truncate(value, valW)
 
-	// Truncate key if needed
-	keyRunes := []rune(key)
-	if len(keyRunes) > keyW {
-		if keyW > 1 {
-			keyRunes = keyRunes[:keyW-1]
-			keyRunes = append(keyRunes, '…')
-		} else {
-			keyRunes = keyRunes[:1]
-		}
-	}
-
-	// Truncate value if needed
-	valRunes := []rune(value)
-	if len(valRunes) > valW {
-		if valW > 1 {
-			valRunes = valRunes[:valW-1]
-			valRunes = append(valRunes, '…')
-		} else {
-			valRunes = valRunes[:1]
-		}
-	}
-
-	// Right-align key within allocated width
-	keyX := keyW - len(keyRunes)
-	for i, ch := range keyRunes {
-		r.Cell(keyX+i, y, ch, keyStyle.Fg, keyStyle.Bg, keyStyle.Attr)
-	}
-
-	// Separator
+	// Key is right-aligned within its column, so the separators line up when
+	// callers share a column width
+	r.TextStyled(keyW-RuneLen(key), y, key, keyStyle)
 	r.Cell(keyW, y, sep, keyStyle.Fg, keyStyle.Bg, terminal.AttrDim)
-
-	// Left-align value
-	for i, ch := range valRunes {
-		r.Cell(keyW+1+i, y, ch, valStyle.Fg, valStyle.Bg, valStyle.Attr)
-	}
+	r.TextStyled(keyW+1, y, value, valStyle)
 }
 
-// KeyValueWrap renders key-value with value wrapping to subsequent lines
-// Returns number of lines used
-// Layout:
+// KeyValueWrap renders a key with its value wrapped into the value column,
+// returning the number of lines used
 //
 //	key: value text that is
 //	     long and wraps to
@@ -89,111 +64,30 @@ func (r Region) KeyValueWrap(y int, key, value string, keyStyle, valStyle Style,
 		return 0
 	}
 
-	keyLen := RuneLen(key)
+	keyW, valW := keyValueSplit(r.W, RuneLen(key), RuneLen(value))
+	k := Truncate(key, keyW)
 
-	// Dynamic allocation same as KeyValue
-	maxKeyW := (r.W * 2) / 5  // 40%
-	minValW := (r.W * 3) / 10 // 30%
-
-	keyW := keyLen
-	if keyW > maxKeyW {
-		keyW = maxKeyW
-	}
-	if keyW < 1 {
-		keyW = 1
-	}
-
-	valW := r.W - keyW - 1 // -1 for separator
-	if valW < minValW && r.W > minValW+2 {
-		valW = minValW
-		keyW = r.W - valW - 1
-		if keyW < 1 {
-			keyW = 1
-			valW = r.W - 2
-		}
-	}
-	if valW < 1 {
-		valW = 1
-	}
-
-	// Truncate key if needed
-	keyRunes := []rune(key)
-	if len(keyRunes) > keyW {
-		if keyW > 1 {
-			keyRunes = keyRunes[:keyW-1]
-			keyRunes = append(keyRunes, '…')
-		} else {
-			keyRunes = keyRunes[:1]
-		}
-	}
-
-	// Right-align key within allocated width
-	keyX := keyW - len(keyRunes)
-	for i, ch := range keyRunes {
-		r.Cell(keyX+i, y, ch, keyStyle.Fg, keyStyle.Bg, keyStyle.Attr)
-	}
-
-	// Separator
+	r.TextStyled(keyW-RuneLen(k), y, k, keyStyle)
 	r.Cell(keyW, y, sep, keyStyle.Fg, keyStyle.Bg, terminal.AttrDim)
 
-	// Wrap value text
-	valueX := keyW + 1
-	lines := WrapText(value, valW)
-	if len(lines) == 0 {
-		return 1
-	}
-
 	rendered := 0
-	for i, line := range lines {
-		lineY := y + i
-		if lineY >= r.H {
+	for i, line := range WrapText(value, valW) {
+		if y+i >= r.H {
 			break
 		}
-		r.Text(valueX, lineY, line, valStyle.Fg, valStyle.Bg, valStyle.Attr)
+		r.TextStyled(keyW+1, y+i, line, valStyle)
 		rendered++
 	}
-
-	if rendered < 1 {
-		rendered = 1
-	}
-	return rendered
+	return max(rendered, 1)
 }
 
-// MeasureKeyValueWrap calculates lines needed for KeyValueWrap without rendering
-// Useful for layout pre-calculation
+// MeasureKeyValueWrap returns the line count KeyValueWrap needs, for layout
+// pre-calculation. Shares the column split with the renderer, so the two agree.
 func (r Region) MeasureKeyValueWrap(key, value string) int {
 	if r.W < 3 {
 		return 1
 	}
-
-	keyLen := RuneLen(key)
-	maxKeyW := (r.W * 2) / 5
-	minValW := (r.W * 3) / 10
-
-	keyW := keyLen
-	if keyW > maxKeyW {
-		keyW = maxKeyW
-	}
-	if keyW < 1 {
-		keyW = 1
-	}
-
-	valW := r.W - keyW - 1
-	if valW < minValW && r.W > minValW+2 {
-		valW = minValW
-		keyW = r.W - valW - 1
-		if keyW < 1 {
-			keyW = 1
-			valW = r.W - 2
-		}
-	}
-	if valW < 1 {
-		valW = 1
-	}
-
-	lines := WrapText(value, valW)
-	if len(lines) == 0 {
-		return 1
-	}
-	return len(lines)
+	_, valW := keyValueSplit(r.W, RuneLen(key), RuneLen(value))
+	return max(len(WrapText(value, valW)), 1)
 }
+

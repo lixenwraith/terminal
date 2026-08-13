@@ -105,3 +105,15 @@ func (v *ViewportScroll) ClipToViewport(y, h int) (viewY, viewH, contentOffset i
 
 	return viewY, viewH, contentOffset, viewH > 0
 }
+
+// EnsureRange scrolls the least distance that brings a content row range into
+// view; a range taller than the viewport is top-aligned
+func (v *ViewportScroll) EnsureRange(y, h int) {
+	switch {
+	case h >= v.ViewportH || y < v.Offset:
+		v.Offset = y
+	case y+h > v.Offset+v.ViewportH:
+		v.Offset = y + h - v.ViewportH
+	}
+	v.clamp()
+}

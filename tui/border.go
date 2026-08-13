@@ -38,7 +38,14 @@ const (
 
 // Box draws border around region edge
 func (r Region) Box(line LineType, fg color.RGB) {
-	if r.W < 2 || r.H < 2 {
+	r.BoxClipped(line, fg, r.H, 0)
+}
+
+// BoxClipped draws the visible slice of a box whose logical height is totalH,
+// with off rows scrolled past its top edge. Rows outside the box are skipped,
+// so a partially visible box keeps its sides and grows no false edges.
+func (r Region) BoxClipped(line LineType, fg color.RGB, totalH, off int) {
+	if r.W < 2 || r.H < 1 || totalH < 2 {
 		return
 	}
 	if line >= LineType(len(boxChars)) {
@@ -48,22 +55,28 @@ func (r Region) Box(line LineType, fg color.RGB) {
 	chars := boxChars[line]
 	bg := color.RGB{} // Transparent (use existing bg)
 
-	// Corners
-	r.Cell(0, 0, chars[boxTL], fg, bg, terminal.AttrNone)
-	r.Cell(r.W-1, 0, chars[boxTR], fg, bg, terminal.AttrNone)
-	r.Cell(0, r.H-1, chars[boxBL], fg, bg, terminal.AttrNone)
-	r.Cell(r.W-1, r.H-1, chars[boxBR], fg, bg, terminal.AttrNone)
-
-	// Horizontal edges
-	for x := 1; x < r.W-1; x++ {
-		r.Cell(x, 0, chars[boxH], fg, bg, terminal.AttrNone)
-		r.Cell(x, r.H-1, chars[boxH], fg, bg, terminal.AttrNone)
-	}
-
-	// Vertical edges
-	for y := 1; y < r.H-1; y++ {
-		r.Cell(0, y, chars[boxV], fg, bg, terminal.AttrNone)
-		r.Cell(r.W-1, y, chars[boxV], fg, bg, terminal.AttrNone)
+	for y := range r.H {
+		c := off + y
+		if c < 0 || c >= totalH {
+			continue
+		}
+		switch c {
+		case 0:
+			r.Cell(0, y, chars[boxTL], fg, bg, terminal.AttrNone)
+			r.Cell(r.W-1, y, chars[boxTR], fg, bg, terminal.AttrNone)
+			for x := 1; x < r.W-1; x++ {
+				r.Cell(x, y, chars[boxH], fg, bg, terminal.AttrNone)
+			}
+		case totalH - 1:
+			r.Cell(0, y, chars[boxBL], fg, bg, terminal.AttrNone)
+			r.Cell(r.W-1, y, chars[boxBR], fg, bg, terminal.AttrNone)
+			for x := 1; x < r.W-1; x++ {
+				r.Cell(x, y, chars[boxH], fg, bg, terminal.AttrNone)
+			}
+		default:
+			r.Cell(0, y, chars[boxV], fg, bg, terminal.AttrNone)
+			r.Cell(r.W-1, y, chars[boxV], fg, bg, terminal.AttrNone)
+		}
 	}
 }
 
@@ -158,4 +171,3 @@ func (r Region) Card(title string, line LineType, fg color.RGB) Region {
 
 	return r.Inset(1)
 }
-

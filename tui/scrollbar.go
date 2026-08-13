@@ -5,45 +5,61 @@ import (
 	"github.com/lixenwraith/terminal"
 )
 
-// ScrollBar draws vertical scrollbar track with thumb
+// ScrollBarOpts configures scrollbar rendering
+type ScrollBarOpts struct {
+	ThumbFg  color.RGB
+	TrackFg  color.RGB
+	Bg       color.RGB // Zero inherits the existing cell background
+	Thumb    rune      // 0 = '█'
+	Track    rune      // 0 = '░'
+	HideIdle bool      // Draw nothing when content fits the viewport
+}
+
+// ScrollBar draws a vertical scrollbar track with thumb in a single color
 func (r Region) ScrollBar(x int, offset, visible, total int, fg color.RGB) {
+	r.ScrollBarStyled(x, offset, visible, total, ScrollBarOpts{ThumbFg: fg, TrackFg: fg})
+}
+
+// ScrollBarStyled draws a vertical scrollbar at column x with explicit styling
+func (r Region) ScrollBarStyled(x int, offset, visible, total int, opts ScrollBarOpts) {
 	if x < 0 || x >= r.W || r.H < 1 {
 		return
+	}
+
+	thumbCh, trackCh := opts.Thumb, opts.Track
+	if thumbCh == 0 {
+		thumbCh = '█'
+	}
+	if trackCh == 0 {
+		trackCh = '░'
 	}
 
 	trackH := r.H
 	if total <= visible || trackH < 3 {
 		// No scrolling needed or track too small
+		if opts.HideIdle {
+			return
+		}
 		for y := range trackH {
-			r.Cell(x, y, '│', fg, color.RGB{}, terminal.AttrDim)
+			r.Cell(x, y, '│', opts.TrackFg, opts.Bg, terminal.AttrDim)
 		}
 		return
 	}
 
-	// Calculate thumb size and position
 	thumbH := min(max((visible*trackH)/total, 1), trackH)
-
 	maxScroll := total - visible
 	thumbY := 0
 	if maxScroll > 0 {
 		thumbY = (offset * (trackH - thumbH)) / maxScroll
 	}
-	if thumbY < 0 {
-		thumbY = 0
-	}
-	if thumbY+thumbH > trackH {
-		thumbY = trackH - thumbH
-	}
+	thumbY = min(max(thumbY, 0), trackH-thumbH)
 
-	// Draw track and thumb
 	for y := range trackH {
-		var ch rune
 		if y >= thumbY && y < thumbY+thumbH {
-			ch = '█'
+			r.Cell(x, y, thumbCh, opts.ThumbFg, opts.Bg, terminal.AttrNone)
 		} else {
-			ch = '░'
+			r.Cell(x, y, trackCh, opts.TrackFg, opts.Bg, terminal.AttrDim)
 		}
-		r.Cell(x, y, ch, fg, color.RGB{}, terminal.AttrNone)
 	}
 }
 
