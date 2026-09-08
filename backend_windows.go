@@ -33,10 +33,6 @@ func newBackend() Backend {
 }
 
 func (b *windowsBackend) Init() error {
-	if os.Getenv("WT_SESSION") == "" && os.Getenv("WT_PROFILE_ID") == "" {
-		return fmt.Errorf("Windows Terminal required: WT_SESSION unset; conhost lacks alt screen")
-	}
-
 	if err := windows.GetConsoleMode(b.stdin, &b.oldStdinMode); err != nil {
 		return fmt.Errorf("GetConsoleMode stdin: %w", err)
 	}

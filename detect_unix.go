@@ -43,10 +43,10 @@ func resetTerminalMode() {
 		defer tty.Close()
 		fd := int(tty.Fd())
 		// Get current termios, enable ECHO and ICANON
-		if termios, err := unix.IoctlGetTermios(fd, unix.TCGETS); err == nil {
+		if termios, err := unix.IoctlGetTermios(fd, tcgets); err == nil {
 			termios.Lflag |= unix.ECHO | unix.ICANON | unix.ISIG | unix.IEXTEN
 			termios.Iflag |= unix.ICRNL
-			unix.IoctlSetTermios(fd, unix.TCSETS, termios)
+			unix.IoctlSetTermios(fd, tcsets, termios)
 		}
 	}
 }
