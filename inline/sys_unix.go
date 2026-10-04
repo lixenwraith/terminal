@@ -10,6 +10,9 @@ import (
 )
 
 func detectColorMode() colorMode {
+	if textConsole() {
+		return colorMode16
+	}
 	colorterm := os.Getenv("COLORTERM")
 	if colorterm == "truecolor" || colorterm == "24bit" {
 		return colorModeTrueColor

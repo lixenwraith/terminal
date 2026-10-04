@@ -24,16 +24,36 @@ const (
 // Style describes text appearance; zero value is unstyled.
 // Composable: inline.Fg(color.Amber).Bold().Underline()
 type Style struct {
-	fg, bg       color.RGB
-	hasFg, hasBg bool
-	attr         Attribute
+	fg, bg paint
+	attr   Attribute
 }
 
+// paint is one color: none, an RGB value, or an ANSI 16 index
+type paint struct {
+	rgb  color.RGB
+	ansi uint8
+	kind uint8 // paintNone, paintRGB, paintANSI
+}
+
+const (
+	paintNone uint8 = iota
+	paintRGB
+	paintANSI
+)
+
 // Fg starts a style with foreground color
-func Fg(c color.RGB) Style { return Style{fg: c, hasFg: true} }
+func Fg(c color.RGB) Style { return Style{fg: paint{rgb: c, kind: paintRGB}} }
+
+// FgANSI starts a style with an ANSI 16 foreground (color.ANSIRed..). The
+// terminal's theme picks the shade, and every terminal, a text console
+// included, renders it.
+func FgANSI(i uint8) Style { return Style{fg: paint{ansi: i & 15, kind: paintANSI}} }
 
 // Bg sets background color
-func (s Style) Bg(c color.RGB) Style { s.bg, s.hasBg = c, true; return s }
+func (s Style) Bg(c color.RGB) Style { s.bg = paint{rgb: c, kind: paintRGB}; return s }
+
+// BgANSI sets an ANSI 16 background
+func (s Style) BgANSI(i uint8) Style { s.bg = paint{ansi: i & 15, kind: paintANSI}; return s }
 
 // Bold applies the bold attribute
 func (s Style) Bold() Style { s.attr |= Bold; return s }
@@ -80,21 +100,33 @@ func (p *Printer) writeSGR(b *strings.Builder, s Style) {
 			b.WriteString(m.code)
 		}
 	}
-	if s.hasFg {
-		if p.mode == colorModeTrueColor {
-			fmt.Fprintf(b, ";38;2;%d;%d;%d", s.fg.R, s.fg.G, s.fg.B)
-		} else {
-			fmt.Fprintf(b, ";38;5;%d", color.RGBTo256(s.fg))
-		}
-	}
-	if s.hasBg {
-		if p.mode == colorModeTrueColor {
-			fmt.Fprintf(b, ";48;2;%d;%d;%d", s.bg.R, s.bg.G, s.bg.B)
-		} else {
-			fmt.Fprintf(b, ";48;5;%d", color.RGBTo256(s.bg))
-		}
-	}
+	p.writeColor(b, s.fg, 30)
+	p.writeColor(b, s.bg, 40)
 	b.WriteByte('m')
+}
+
+// writeColor emits one color for base 30 (foreground) or 40 (background).
+// ANSI indices go out as 30-37/90-97 in every mode; RGB as the mode allows,
+// degraded to the nearest ANSI index on a 16-color terminal.
+func (p *Printer) writeColor(b *strings.Builder, c paint, base int) {
+	if c.kind == paintRGB {
+		switch p.mode {
+		case colorModeTrueColor:
+			fmt.Fprintf(b, ";%d;2;%d;%d;%d", base+8, c.rgb.R, c.rgb.G, c.rgb.B)
+			return
+		case colorMode256:
+			fmt.Fprintf(b, ";%d;5;%d", base+8, color.RGBTo256(c.rgb))
+			return
+		}
+		c = paint{ansi: color.RGBTo16(c.rgb), kind: paintANSI}
+	}
+	if c.kind == paintANSI {
+		if c.ansi < 8 {
+			fmt.Fprintf(b, ";%d", base+int(c.ansi))
+		} else {
+			fmt.Fprintf(b, ";%d", base+60+int(c.ansi)-8)
+		}
+	}
 }
 
 // --- Width handling (internal, rune-count semantics) ---

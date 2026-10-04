@@ -5,6 +5,9 @@ package inline
 import "os"
 
 func detectColorMode() colorMode {
+	if textConsole() {
+		return colorMode16
+	}
 	return colorMode256
 }
 

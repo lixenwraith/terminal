@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/lixenwraith/color"
@@ -30,7 +31,16 @@ type colorMode uint8
 const (
 	colorMode256 colorMode = iota
 	colorModeTrueColor
+	colorMode16
 )
+
+// textConsole reports a TERM limited to 16 colors (Linux VT, FreeBSD syscons,
+// VT100-class). It wins over COLORTERM, which profiles export everywhere.
+func textConsole() bool {
+	term := os.Getenv("TERM")
+	return term == "linux" || term == "ansi" || strings.HasPrefix(term, "cons25") ||
+		strings.HasPrefix(term, "vt") || strings.HasSuffix(term, "-16color")
+}
 
 // Printer manages styled output and the live block. Safe for concurrent use.
 type Printer struct {
@@ -44,7 +54,7 @@ type Printer struct {
 }
 
 // New creates a Printer for w. Terminal detection via size probe;
-// styling defaults on for terminals with NO_COLOR unset.
+// styling defaults on for terminals with NO_COLOR unset and TERM not dumb.
 func New(w io.Writer) *Printer {
 	p := &Printer{w: bufio.NewWriter(w)}
 	if f, isFile := w.(*os.File); isFile {
@@ -52,7 +62,7 @@ func New(w io.Writer) *Printer {
 			p.tty = f
 		}
 	}
-	p.color = p.tty != nil && os.Getenv("NO_COLOR") == ""
+	p.color = p.tty != nil && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 	p.mode = detectColorMode()
 	// Keep the LUT build out of the first Paint call
 	if p.color && p.mode == colorMode256 {
@@ -60,6 +70,9 @@ func New(w io.Writer) *Printer {
 	}
 	return p
 }
+
+// IsTerminal reports whether the output is a terminal
+func (p *Printer) IsTerminal() bool { return p.tty != nil }
 
 // SetColor overrides style detection. Affects Paint only; live-block
 // updates remain terminal-gated.

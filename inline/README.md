@@ -7,7 +7,8 @@ tooling, build scripts) that want color and live status without a full-screen
 TUI.
 
 Cross-platform (Unix, Windows). Depends only on the `color` package for
-24-bit RGB inputs and 256-color automatic degradation.
+24-bit RGB inputs, the ANSI 16 indices, and automatic degradation to 256 or 16
+colors.
 
 ## Model
 
@@ -29,13 +30,14 @@ active live block erases, prints, and redraws in one flush.
 
 | Method | Description |
 |---|---|
-| `New(w io.Writer) *Printer` | Creates a printer. Terminal detection via size probe; color defaults on for terminals with `NO_COLOR` unset. Safe for concurrent use. |
+| `New(w io.Writer) *Printer` | Creates a printer. Terminal detection via size probe; color defaults on for terminals with `NO_COLOR` unset and `TERM` not `dumb`. Safe for concurrent use. |
 | `Log(format string, a ...any)` | Prints one permanent line above the live block (`Printf` semantics, newline appended). |
 | `Update(lines ...string)` | Replaces the live block, rewriting in place. No-op on non-terminal output. |
 | `Done(final ...string)` | Erases the live block and prints final permanent lines. Call before exit. |
 | `Paint(s string, st Style) string` | Returns `s` wrapped in SGR codes for the detected color mode, or unchanged when color is off. |
 | `SetColor(on bool)` | Overrides color detection (e.g. force styling into a pipe for `less -R`). Affects `Paint` only; `Update` remains terminal-gated. |
 | `Size() (w, h int)` | Current terminal dimensions, 80×24 when unknown. |
+| `IsTerminal() bool` | Whether the output is a terminal. |
 
 ### Style
 
@@ -44,7 +46,9 @@ Value type, zero value is unstyled, builder-composable:
 | Function | Description |
 |---|---|
 | `Fg(c color.RGB) Style` | Starts a style with foreground color. |
+| `FgANSI(i uint8) Style` | Starts a style with an ANSI 16 foreground (`color.ANSIRed`..). |
 | `(s Style) Bg(c color.RGB) Style` | Adds background color. |
+| `(s Style) BgANSI(i uint8) Style` | Adds an ANSI 16 background. |
 | `(s Style) Bold() Style` | Adds bold attribute (also: `Dim`, `Italic`, `Underline`, `Blink`, `Reverse`). |
 
 ```go
@@ -53,7 +57,18 @@ p.Log("%s low disk space", p.Paint("warning:", warn))
 ```
 
 True color terminals get `38;2;R;G;B`; 256-color terminals get `38;5;N` via
-Redmean mapping dynamically handled by the `color` package.
+Redmean mapping dynamically handled by the `color` package; 16-color terminals
+(`TERM` of `linux`, `cons25*`, `vt*`, `ansi` or `*-16color`, whatever
+`COLORTERM` says) get the nearest ANSI index.
+
+ANSI 16 colors (`FgANSI`, `BgANSI`) are sent as `30-37`/`90-97` in every mode:
+the terminal's theme picks the shade, and a text console renders them as
+faithfully as an emulator. Prefer them for semantic colors such as log levels.
+
+```go
+errSt := inline.FgANSI(color.ANSIRed).Bold()
+p.Log("%s disk full", p.Paint("ERROR", errSt))
+```
 
 ### Progress helpers
 
