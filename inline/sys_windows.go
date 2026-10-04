@@ -9,6 +9,9 @@ import (
 )
 
 func detectColorMode() colorMode {
+	if textConsole() {
+		return colorMode16
+	}
 	if os.Getenv("WT_SESSION") != "" || os.Getenv("WT_PROFILE_ID") != "" {
 		return colorModeTrueColor
 	}
