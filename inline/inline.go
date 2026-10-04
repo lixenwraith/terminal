@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/lixenwraith/color"
+	"golang.org/x/term"
 )
 
 // Internal color capability representation
@@ -53,14 +54,13 @@ type Printer struct {
 	drawn int      // lines currently on screen (may be clamped below len(live))
 }
 
-// New creates a Printer for w. Terminal detection via size probe;
-// styling defaults on for terminals with NO_COLOR unset and TERM not dumb.
+// New creates a Printer for w. A terminal that reports no size, a serial
+// line, is still one, at 80x24; styling defaults on for terminals with
+// NO_COLOR unset and TERM not dumb.
 func New(w io.Writer) *Printer {
 	p := &Printer{w: bufio.NewWriter(w)}
-	if f, isFile := w.(*os.File); isFile {
-		if _, _, ok := windowSize(f); ok {
-			p.tty = f
-		}
+	if f, isFile := w.(*os.File); isFile && term.IsTerminal(int(f.Fd())) {
+		p.tty = f
 	}
 	p.color = p.tty != nil && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 	p.mode = detectColorMode()

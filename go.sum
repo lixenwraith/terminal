@@ -1,5 +1,5 @@
-github.com/lixenwraith/color v0.0.0-20260719094342-615e11bc7897 h1:YkTK1vIzG6sqKRKaeUdkPyMT2laithY1d8tCqyId77U=
-github.com/lixenwraith/color v0.0.0-20260719094342-615e11bc7897/go.mod h1:p02MsAGqlmZu3sc6BPYCKmaedF+lqBoijnuu5cOrYeo=
+github.com/lixenwraith/color v0.0.0-20261004042426-912b93708f95 h1:64BAixbU3RAsDacvCDgxMKKddPuMxL0h2KKsqsG9iWU=
+github.com/lixenwraith/color v0.0.0-20261004042426-912b93708f95/go.mod h1:p02MsAGqlmZu3sc6BPYCKmaedF+lqBoijnuu5cOrYeo=
 golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
 golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
 golang.org/x/term v0.46.0 h1:3+OXuTbaKDgwk8jTi3aSLHRlmWqHEUDUtxnbFigO4YE=
