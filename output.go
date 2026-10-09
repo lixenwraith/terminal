@@ -2,6 +2,8 @@ package terminal
 
 import (
 	"bufio"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/lixenwraith/color"
 )
@@ -174,8 +176,9 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 
 				o.writeStyleCoalesced(w, c.Fg, c.Bg, c.Attrs)
 
+				// A cell holds one glyph, never a control the terminal would act on
 				r := c.Rune
-				if r == 0 {
+				if unicode.IsControl(r) || !utf8.ValidRune(r) {
 					r = ' '
 				}
 				if r < 0x80 {
@@ -254,86 +257,43 @@ func (o *outputBuffer) moveCursorTo(w *bufio.Writer, x, y int) {
 
 // writeStyleCoalesced emits a single combined SGR sequence when style changes
 func (o *outputBuffer) writeStyleCoalesced(w *bufio.Writer, fg, bg color.RGB, attr Attr) {
+	if o.colorMode == ColorModeNone {
+		fg, bg, attr = color.RGB{}, color.RGB{}, attr&AttrStyle
+	}
 	// Check what changed
-	fgChanged := !o.lastValid || fg != o.lastFg || (attr&AttrFg256) != (o.lastAttr&AttrFg256)
-	bgChanged := !o.lastValid || bg != o.lastBg || (attr&AttrBg256) != (o.lastAttr&AttrBg256)
+	fgChanged := !o.lastValid || fg != o.lastFg || (attr&AttrFgColor) != (o.lastAttr&AttrFgColor)
+	bgChanged := !o.lastValid || bg != o.lastBg || (attr&AttrBgColor) != (o.lastAttr&AttrBgColor)
 	styleAttr := attr & AttrStyle
-	lastStyleAttr := o.lastAttr & AttrStyle
-	attrChanged := !o.lastValid || styleAttr != lastStyleAttr
+	attrChanged := !o.lastValid || styleAttr != o.lastAttr&AttrStyle
+	// A text console's bright colors (90-97) set bold, which only a reset
+	// clears: 16 colors restate the whole style from one
+	if o.colorMode == ColorMode16 && (fgChanged || bgChanged) {
+		attrChanged = true
+	}
 
 	if !fgChanged && !bgChanged && !attrChanged {
 		return
 	}
 
-	// If attributes changed, must reset first
+	w.Write(csi)
+	// If attributes changed, must reset first, then restate both colors
 	if attrChanged {
-		w.Write(csi) // \x1b[
-		first := true
-
-		// Reset
 		w.WriteByte('0')
-		first = false
-
-		// Style attributes
-		if styleAttr&AttrBold != 0 {
-			if !first {
+		for _, a := range attrCodes {
+			if styleAttr&a.bit != 0 {
 				w.WriteByte(';')
+				w.WriteByte(a.code)
 			}
-			w.WriteByte('1')
-			first = false
 		}
-		if styleAttr&AttrDim != 0 {
-			if !first {
-				w.WriteByte(';')
-			}
-			w.WriteByte('2')
-			first = false
-		}
-		if styleAttr&AttrItalic != 0 {
-			if !first {
-				w.WriteByte(';')
-			}
-			w.WriteByte('3')
-			first = false
-		}
-		if styleAttr&AttrUnderline != 0 {
-			if !first {
-				w.WriteByte(';')
-			}
-			w.WriteByte('4')
-			first = false
-		}
-		if styleAttr&AttrBlink != 0 {
-			if !first {
-				w.WriteByte(';')
-			}
-			w.WriteByte('5')
-			first = false
-		}
-		if styleAttr&AttrReverse != 0 {
-			if !first {
-				w.WriteByte(';')
-			}
-			w.WriteByte('7')
-			first = false
-		}
-
-		o.writeFgInline(w, fg, attr)
-		o.writeBgInline(w, bg, attr)
-		w.WriteByte('m')
-	} else {
-		// Only colors changed, emit minimal sequence
-		if fgChanged && bgChanged {
-			w.Write(csi)
-			o.writeFgInline(w, fg, attr)
-			o.writeBgInline(w, bg, attr)
-			w.WriteByte('m')
-		} else if fgChanged {
-			o.writeFgFull(w, fg, attr)
-		} else if bgChanged {
-			o.writeBgFull(w, bg, attr)
-		}
+		fgChanged, bgChanged = true, true
 	}
+	if fgChanged {
+		o.writeColor(w, fg, attr&AttrFg256 != 0, attr&AttrFgDefault != 0, 30, attrChanged)
+	}
+	if bgChanged {
+		o.writeColor(w, bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, attrChanged || fgChanged)
+	}
+	w.WriteByte('m')
 
 	o.lastFg = fg
 	o.lastBg = bg
@@ -341,89 +301,50 @@ func (o *outputBuffer) writeStyleCoalesced(w *bufio.Writer, fg, bg color.RGB, at
 	o.lastValid = true
 }
 
-// writeFgInline writes fg color parameters (no CSI prefix, no 'm' suffix)
-func (o *outputBuffer) writeFgInline(w *bufio.Writer, fg color.RGB, attr Attr) {
-	w.WriteByte(';')
-	if attr&AttrFg256 != 0 {
-		// 256-color: 38;5;N
-		w.Write([]byte("38;5;"))
-		writeInt(w, int(fg.R))
-	} else if o.colorMode == ColorModeTrueColor {
-		// True color: 38;2;R;G;B
-		w.Write([]byte("38;2;"))
-		writeInt(w, int(fg.R))
-		w.WriteByte(';')
-		writeInt(w, int(fg.G))
-		w.WriteByte(';')
-		writeInt(w, int(fg.B))
-	} else {
-		// Fallback 256: 38;5;N
-		w.Write([]byte("38;5;"))
-		writeInt(w, int(RGBTo256(fg)))
-	}
-}
+// attrCodes pairs each style bit with its SGR parameter, in emission order
+var attrCodes = [...]struct {
+	bit  Attr
+	code byte
+}{{AttrBold, '1'}, {AttrDim, '2'}, {AttrItalic, '3'}, {AttrUnderline, '4'}, {AttrBlink, '5'}, {AttrReverse, '7'}}
 
-// writeBgInline writes bg color parameters (no CSI prefix, no 'm' suffix)
-func (o *outputBuffer) writeBgInline(w *bufio.Writer, bg color.RGB, attr Attr) {
-	w.WriteByte(';')
-	if attr&AttrBg256 != 0 {
-		// 256-color: 48;5;N
-		w.Write([]byte("48;5;"))
-		writeInt(w, int(bg.R))
-	} else if o.colorMode == ColorModeTrueColor {
-		// True color: 48;2;R;G;B
-		w.Write([]byte("48;2;"))
-		writeInt(w, int(bg.R))
-		w.WriteByte(';')
-		writeInt(w, int(bg.G))
-		w.WriteByte(';')
-		writeInt(w, int(bg.B))
-	} else {
-		// Fallback 256: 48;5;N
-		w.Write([]byte("48;5;"))
-		writeInt(w, int(RGBTo256(bg)))
+// writeColor writes one color's SGR parameters, after a ';' when sep, for
+// base 30 (foreground) or 40 (background): the terminal's own, a palette
+// index, or RGB, as the color mode allows. ColorModeNone writes nothing.
+func (o *outputBuffer) writeColor(w *bufio.Writer, c color.RGB, palette, deflt bool, base int, sep bool) {
+	if o.colorMode == ColorModeNone {
+		return
 	}
-}
-
-// writeFgFull writes complete fg color sequence
-func (o *outputBuffer) writeFgFull(w *bufio.Writer, fg color.RGB, attr Attr) {
-	if attr&AttrFg256 != 0 {
-		w.Write(csiFg256)
-		writeInt(w, int(fg.R))
-		w.WriteByte('m')
-	} else if o.colorMode == ColorModeTrueColor {
-		w.Write(csiFgRGB)
-		writeInt(w, int(fg.R))
+	if sep {
 		w.WriteByte(';')
-		writeInt(w, int(fg.G))
-		w.WriteByte(';')
-		writeInt(w, int(fg.B))
-		w.WriteByte('m')
-	} else {
-		w.Write(csiFg256)
-		writeInt(w, int(RGBTo256(fg)))
-		w.WriteByte('m')
 	}
-}
-
-// writeBgFull writes complete bg color sequence
-func (o *outputBuffer) writeBgFull(w *bufio.Writer, bg color.RGB, attr Attr) {
-	if attr&AttrBg256 != 0 {
-		w.Write(csiBg256)
-		writeInt(w, int(bg.R))
-		w.WriteByte('m')
-	} else if o.colorMode == ColorModeTrueColor {
-		w.Write(csiBgRGB)
-		writeInt(w, int(bg.R))
+	switch {
+	case deflt:
+		writeInt(w, base+9)
+	case o.colorMode == ColorMode16:
+		i := color.RGBTo16(c)
+		if palette {
+			i = paletteTo16(c.R)
+		}
+		if i >= 8 {
+			base += 60 - 8 // bright: 90-97, 100-107
+		}
+		writeInt(w, base+int(i))
+	case palette:
+		writeInt(w, base+8)
+		w.Write(sgrPalette)
+		writeInt(w, int(c.R))
+	case o.colorMode == ColorModeTrueColor:
+		writeInt(w, base+8)
+		w.Write(sgrRGB)
+		writeInt(w, int(c.R))
 		w.WriteByte(';')
-		writeInt(w, int(bg.G))
+		writeInt(w, int(c.G))
 		w.WriteByte(';')
-		writeInt(w, int(bg.B))
-		w.WriteByte('m')
-	} else {
-		w.Write(csiBg256)
-		writeInt(w, int(RGBTo256(bg)))
-		w.WriteByte('m')
+		writeInt(w, int(c.B))
+	default:
+		writeInt(w, base+8)
+		w.Write(sgrPalette)
+		writeInt(w, int(RGBTo256(c)))
 	}
 }
 
@@ -436,11 +357,14 @@ func (o *outputBuffer) forceFullRedraw() {
 	o.cursorValid = false
 }
 
-// clear writes a clear screen with specified background
-func (o *outputBuffer) clear(bg color.RGB) {
+// clear writes a clear screen with specified background, attr's
+// AttrBgDefault or AttrBg256 saying how to read it
+func (o *outputBuffer) clear(bg color.RGB, attr Attr) {
 	w := o.writer
 	w.Write(csiSGR0)
-	o.writeBgFull(w, bg, 0)
+	w.Write(csi)
+	o.writeColor(w, bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, false)
+	w.WriteByte('m')
 	w.Write(csiClear)
 
 	o.lastValid = false
@@ -448,7 +372,7 @@ func (o *outputBuffer) clear(bg color.RGB) {
 	w.Flush()
 
 	for i := range o.front {
-		o.front[i] = Cell{Rune: ' ', Bg: bg}
+		o.front[i] = Cell{Rune: ' ', Bg: bg, Attrs: attr & AttrBgColor}
 	}
 }
 

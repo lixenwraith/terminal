@@ -8,19 +8,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func detectColorMode() colorMode {
-	if textConsole() {
-		return colorMode16
-	}
-	if os.Getenv("WT_SESSION") != "" || os.Getenv("WT_PROFILE_ID") != "" {
-		return colorModeTrueColor
-	}
-	if ct := os.Getenv("COLORTERM"); ct == "truecolor" || ct == "24bit" {
-		return colorModeTrueColor
-	}
-	return colorMode256
-}
-
 func windowSize(f *os.File) (w, h int, ok bool) {
 	var info windows.ConsoleScreenBufferInfo
 	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(f.Fd()), &info); err != nil {

@@ -39,15 +39,15 @@ list.Selection = 0
 
 for {
     root := tui.NewRegion(cells, w, 0, 0, w, h)
-    root.Fill(terminal.Gunmetal)
+    root.Fill(color.Gunmetal)
 
-    root.Box(tui.LineRounded, terminal.SteelBlue)
+    root.Box(tui.LineRounded, color.SteelBlue)
     content := root.Inset(1)
     content.List(buildItems(items), list.Selection, list.Offset, tui.ListOpts{
-        CursorBg: terminal.DarkSlate,
+        CursorBg: color.DarkSlate,
     })
     content.ScrollBar(content.W-1, list.Offset, list.Visible, list.Total,
-        terminal.IronGray)
+        color.IronGray)
 
     term.Flush(cells, w, h)
 
@@ -114,18 +114,59 @@ rounded, heavy line types), `List`, `Table`, `Tree`, `TabBar`, `KeyValue` /
 Representative patterns below; remaining widgets follow the same
 opts-struct + state-struct shape — read the source for full options.
 
+### Theme and form controls
+
+A `Theme` is one `Style` per role (`Text`, `Muted`, `Accent`, `Selected`,
+`Input`, `Cursor`, `Error`, `Border`) plus the `Glyphs` widgets draw. A
+role's `Attr` may carry color bits, a palette index or the terminal's own
+color, so an application builds one theme per color tier and every control
+draws alike in each: `DefaultTheme` is dark true color, `Theme16` uses the
+ANSI 16 on the terminal's own background, `MonoTheme` uses attributes
+alone, and `ThemeFor(term.ColorMode())` picks among them. A selection always changes a glyph (brackets, a pointer,
+the focus mark), so it reads without color. `GlyphsUnicode`, `GlyphsCP437`
+(text consoles) and `GlyphsASCII` (outside UTF-8) are the glyph sets.
+
+```go
+th := tui.DefaultTheme
+root.FillStyle(th.Text) // the panel the controls draw on
+
+value, rows := form.Field(y, 10, tui.Field{Label: "port", Required: true,
+    Help: "TCP port to listen on", Error: portErr}, focus.Index == 0, th)
+value.TextInput(port, "8080", focus.Index == 0, th) // the default as placeholder
+y += rows
+
+value, rows = form.Field(y, 10, tui.Field{Label: "format"}, focus.Index == 1, th)
+value.Choice(0, 0, []string{"raw", "txt", "json"}, format, th) // raw [txt] json
+y += rows
+
+form.Group(y, "tls", "on, pinned", tlsOpen, focus.Index == 2, th)
+```
+
+- `Focus` is the focus ring: `HandleKey` moves it on Tab and Shift+Tab.
+- `Field` draws the focus mark, the label, the required mark, and the error,
+  or the help while focused, and returns the region for the value.
+- `TextInput` draws a `TextFieldState`, its placeholder muted while empty.
+  `TextFieldState.Accept` filters typed and pasted runes (`AcceptInteger`,
+  `AcceptNumber`); `Paste` inserts an `EventPaste`'s text with line breaks
+  as spaces and control characters dropped.
+- `Choice` draws a segmented choice; `StepChoice` moves it on Left and Right.
+- `Toggle` draws an on/off switch.
+- `Group` draws a foldable group's header, and its summary while folded.
+- `OptionListState` and `OptionList` filter options by what is typed,
+  matching name or hint regardless of case.
+
 ### Scrollable list with scrollbar
 
 ```go
 items := make([]tui.ListItem, 0, len(files))
 for _, f := range files {
     items = append(items, tui.ListItem{
-        Icon: '▸', IconFg: terminal.Amber,
+        Icon: '▸', IconFg: color.Amber,
         Text: f.Name, TextStyle: tui.Style{Fg: terminal.LightGray},
     })
 }
-r.List(items, state.Selection, state.Offset, tui.ListOpts{CursorBg: terminal.DarkSlate})
-r.ScrollBar(r.W-1, state.Offset, state.Visible, state.Total, terminal.IronGray)
+r.List(items, state.Selection, state.Offset, tui.ListOpts{CursorBg: color.DarkSlate})
+r.ScrollBar(r.W-1, state.Offset, state.Visible, state.Total, color.IronGray)
 ```
 
 ### Modal dialog
@@ -135,11 +176,11 @@ dlg := tui.Center(root, 50, 12)
 content := dlg.Modal(tui.ModalOpts{
     Title:    "Settings",
     Border:   tui.LineDouble,
-    BorderFg: terminal.SteelBlue,
+    BorderFg: color.SteelBlue,
     TitleFg:  terminal.White,
-    Bg:       terminal.DarkSlate,
+    Bg:       color.DarkSlate,
 })
-content.TextBlock(0, 0, body, fg, terminal.DarkSlate, terminal.AttrNone)
+content.TextBlock(0, 0, body, fg, color.DarkSlate, terminal.AttrNone)
 ```
 
 `Modal` fills, borders, titles, and returns the content region. `Overlay`
@@ -201,6 +242,8 @@ Pure logic, no rendering — usable independently:
 - Width calculations count runes, not terminal columns; East Asian wide
   characters and combining marks are not width-aware.
 - Zero-value `color.RGB` in style fields generally means "inherit"
-  (widget default or row background) — check specific widget docs.
+  (widget default or row background) — check specific widget docs. A zero
+  background with no Bg color bits is transparent: the cell keeps the
+  background beneath it, bits and all.
 - Mouse hit testing: `TabBar` returns `[]TabBounds`; other widgets require
   application-side geometry from the regions used.

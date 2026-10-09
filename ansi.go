@@ -8,10 +8,7 @@ import (
 var (
 	// CSI sequences
 	csi      = []byte("\x1b[")
-	csiEnd   = []byte("m")
-	csiReset = []byte("\x1b[0m")
 	csiClear = []byte("\x1b[2J\x1b[H")
-	csiHome  = []byte("\x1b[H")
 	csiRIS   = []byte("\x1bc") // Reset to Initial GameState (emergency)
 	csiSGR0  = []byte("\x1b[0m")
 
@@ -28,21 +25,9 @@ var (
 	csiAutoWrapOn  = []byte("\x1b[?7h")
 	csiAutoWrapOff = []byte("\x1b[?7l")
 
-	// Color prefixes
-	csiFg256     = []byte("\x1b[38;5;") // followed by N;m
-	csiBg256     = []byte("\x1b[48;5;") // followed by N;m
-	csiFgRGB     = []byte("\x1b[38;2;") // followed by R;G;B;m
-	csiBgRGB     = []byte("\x1b[48;2;") // followed by R;G;B;m
-	csiDefaultFg = []byte("\x1b[39m")
-	csiDefaultBg = []byte("\x1b[49m")
-
-	// Attribute sequences
-	csiAttrBold      = []byte("\x1b[1m")
-	csiAttrDim       = []byte("\x1b[2m")
-	csiAttrItalic    = []byte("\x1b[3m")
-	csiAttrUnderline = []byte("\x1b[4m")
-	csiAttrBlink     = []byte("\x1b[5m")
-	csiAttrReverse   = []byte("\x1b[7m")
+	// Color parameters, after 38 or 48
+	sgrPalette = []byte(";5;") // followed by N
+	sgrRGB     = []byte(";2;") // followed by R;G;B
 
 	// Mouse mode sequences (SGR 1006 for extended coordinates)
 	csiMouseClickOn   = []byte("\x1b[?1000h") // Enable click reporting
@@ -53,6 +38,12 @@ var (
 	csiMouseMotionOff = []byte("\x1b[?1003l")
 	csiMouseSGROn     = []byte("\x1b[?1006h") // Enable SGR extended mode
 	csiMouseSGROff    = []byte("\x1b[?1006l")
+
+	// Bracketed paste: the terminal wraps pasted text in pasteStart, pasteEnd
+	csiPasteOn  = []byte("\x1b[?2004h")
+	csiPasteOff = []byte("\x1b[?2004l")
+	pasteStart  = []byte("\x1b[200~")
+	pasteEnd    = []byte("\x1b[201~")
 )
 
 // writeInt writes an integer without allocation

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"unicode"
 
 	"github.com/lixenwraith/terminal"
@@ -16,7 +17,17 @@ type TextFieldState struct {
 	Text   []rune
 	Cursor int // Positions before which cursor sits (0 = before first char)
 	Scroll int // First visible rune index
+
+	// Accept, when set, filters the runes typed or pasted: AcceptInteger
+	// and AcceptNumber make a typed field
+	Accept func(rune) bool
 }
+
+// AcceptInteger takes the runes of a decimal integer
+func AcceptInteger(r rune) bool { return r >= '0' && r <= '9' || r == '-' }
+
+// AcceptNumber takes the runes of a decimal number, exponent included
+func AcceptNumber(r rune) bool { return AcceptInteger(r) || strings.ContainsRune(".eE+", r) }
 
 // NewTextFieldState creates initialized text field state
 func NewTextFieldState(initial string) *TextFieldState {
@@ -51,23 +62,48 @@ func (t *TextFieldState) Clear() {
 
 // --- Character insertion ---
 
+// clampCursor keeps Cursor within Text, which a caller may have replaced
+func (t *TextFieldState) clampCursor() {
+	t.Cursor = max(0, min(t.Cursor, len(t.Text)))
+}
+
 // Insert adds rune at cursor position
 func (t *TextFieldState) Insert(r rune) {
+	t.clampCursor()
 	t.Text = append(t.Text[:t.Cursor], append([]rune{r}, t.Text[t.Cursor:]...)...)
 	t.Cursor++
 }
 
 // InsertString adds string at cursor position
 func (t *TextFieldState) InsertString(s string) {
+	t.clampCursor()
 	runes := []rune(s)
 	t.Text = append(t.Text[:t.Cursor], append(runes, t.Text[t.Cursor:]...)...)
 	t.Cursor += len(runes)
+}
+
+// Paste inserts pasted text at the cursor: a line break or tab becomes a
+// space, and other control characters and runes Accept refuses are dropped.
+// It reports whether anything was inserted.
+func (t *TextFieldState) Paste(s string) bool {
+	var runes []rune
+	for _, r := range strings.ReplaceAll(s, "\r\n", "\n") {
+		if r == '\n' || r == '\r' || r == '\t' {
+			r = ' '
+		}
+		if !unicode.IsControl(r) && (t.Accept == nil || t.Accept(r)) {
+			runes = append(runes, r)
+		}
+	}
+	t.InsertString(string(runes))
+	return len(runes) > 0
 }
 
 // --- Character deletion ---
 
 // DeleteBackward removes rune before cursor
 func (t *TextFieldState) DeleteBackward() bool {
+	t.clampCursor()
 	if t.Cursor > 0 {
 		t.Text = append(t.Text[:t.Cursor-1], t.Text[t.Cursor:]...)
 		t.Cursor--
@@ -78,6 +114,7 @@ func (t *TextFieldState) DeleteBackward() bool {
 
 // DeleteForward removes rune at cursor
 func (t *TextFieldState) DeleteForward() bool {
+	t.clampCursor()
 	if t.Cursor < len(t.Text) {
 		t.Text = append(t.Text[:t.Cursor], t.Text[t.Cursor+1:]...)
 		return true
@@ -89,6 +126,7 @@ func (t *TextFieldState) DeleteForward() bool {
 
 // DeleteWordBackward removes word before cursor
 func (t *TextFieldState) DeleteWordBackward() bool {
+	t.clampCursor()
 	if t.Cursor == 0 {
 		return false
 	}
@@ -112,6 +150,7 @@ func (t *TextFieldState) DeleteWordBackward() bool {
 
 // DeleteWordForward removes word after cursor
 func (t *TextFieldState) DeleteWordForward() bool {
+	t.clampCursor()
 	if t.Cursor >= len(t.Text) {
 		return false
 	}
@@ -133,6 +172,7 @@ func (t *TextFieldState) DeleteWordForward() bool {
 
 // DeleteToEnd removes from cursor to end
 func (t *TextFieldState) DeleteToEnd() bool {
+	t.clampCursor()
 	if t.Cursor < len(t.Text) {
 		t.Text = t.Text[:t.Cursor]
 		return true
@@ -142,6 +182,7 @@ func (t *TextFieldState) DeleteToEnd() bool {
 
 // DeleteToStart removes from start to cursor
 func (t *TextFieldState) DeleteToStart() bool {
+	t.clampCursor()
 	if t.Cursor > 0 {
 		t.Text = t.Text[t.Cursor:]
 		t.Cursor = 0
@@ -155,6 +196,7 @@ func (t *TextFieldState) DeleteToStart() bool {
 
 // MoveLeft moves cursor left
 func (t *TextFieldState) MoveLeft() {
+	t.clampCursor()
 	if t.Cursor > 0 {
 		t.Cursor--
 	}
@@ -162,6 +204,7 @@ func (t *TextFieldState) MoveLeft() {
 
 // MoveRight moves cursor right
 func (t *TextFieldState) MoveRight() {
+	t.clampCursor()
 	if t.Cursor < len(t.Text) {
 		t.Cursor++
 	}
@@ -171,6 +214,7 @@ func (t *TextFieldState) MoveRight() {
 
 // MoveWordLeft moves cursor to previous word boundary
 func (t *TextFieldState) MoveWordLeft() {
+	t.clampCursor()
 	if t.Cursor == 0 {
 		return
 	}
@@ -186,6 +230,7 @@ func (t *TextFieldState) MoveWordLeft() {
 
 // MoveWordRight moves cursor to next word boundary
 func (t *TextFieldState) MoveWordRight() {
+	t.clampCursor()
 	if t.Cursor >= len(t.Text) {
 		return
 	}
@@ -218,6 +263,7 @@ func (t *TextFieldState) AdjustScroll(viewportW int) {
 	if viewportW <= 0 {
 		return
 	}
+	t.clampCursor()
 	if t.Cursor < t.Scroll {
 		t.Scroll = t.Cursor
 	}
@@ -271,7 +317,7 @@ func (t *TextFieldState) HandleKey(key terminal.Key, r rune, mod terminal.Modifi
 	case terminal.KeyCtrlW:
 		return t.DeleteWordBackward()
 	case terminal.KeyRune:
-		if r >= 32 { // Printable
+		if !unicode.IsControl(r) && (t.Accept == nil || t.Accept(r)) {
 			t.Insert(r)
 			return true
 		}

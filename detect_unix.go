@@ -4,35 +4,17 @@ package terminal
 
 import (
 	"os"
-	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
-// DetectColorMode determines terminal color capability from environment
-func DetectColorMode() ColorMode {
-	colorterm := os.Getenv("COLORTERM")
-	if colorterm == "truecolor" || colorterm == "24bit" {
-		return ColorModeTrueColor
+// controllingTTY opens the controlling terminal for writing, nil without one
+func controllingTTY() *os.File {
+	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return nil
 	}
-
-	if os.Getenv("KITTY_WINDOW_ID") != "" ||
-		os.Getenv("KONSOLE_VERSION") != "" ||
-		os.Getenv("ITERM_SESSION_ID") != "" ||
-		os.Getenv("ALACRITTY_WINDOW_ID") != "" ||
-		os.Getenv("ALACRITTY_LOG") != "" ||
-		os.Getenv("WEZTERM_PANE") != "" {
-		return ColorModeTrueColor
-	}
-
-	term := os.Getenv("TERM")
-	if strings.Contains(term, "truecolor") ||
-		strings.Contains(term, "24bit") ||
-		strings.Contains(term, "direct") {
-		return ColorModeTrueColor
-	}
-
-	return ColorMode256
+	return f
 }
 
 // resetTerminalMode attempts to restore terminal to cooked mode

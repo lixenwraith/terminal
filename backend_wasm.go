@@ -104,9 +104,9 @@ func (b *wasmBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
 
 	select {
 	case data := <-b.inputCh:
-		// If we received exactly ESC, wait briefly for more data
+		// If we received ESC, or ESC ESC, wait briefly for more data
 		// (in case it's start of escape sequence split across callbacks)
-		if len(data) == 1 && data[0] == 0x1b {
+		if string(data) == "\x1b" || string(data) == "\x1b\x1b" {
 			// Use JS setTimeout via a promise-based wait
 			moreCh := make(chan []byte, 1)
 
@@ -156,4 +156,3 @@ func (b *wasmBackend) SetResizeHandler(handler func(width, height int)) {
 	b.jsCallbacks = append(b.jsCallbacks, resizeCb)
 	js.Global().Set("goTerminalResize", resizeCb)
 }
-

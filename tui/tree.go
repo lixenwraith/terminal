@@ -98,7 +98,7 @@ func (r Region) Tree(nodes []TreeNode, cursor, scroll int, opts TreeOpts) int {
 
 	lineFg := opts.LineFg
 	if lineFg == (color.RGB{}) {
-		lineFg = DefaultTheme.Border
+		lineFg = DefaultTheme.Border.Fg
 	}
 
 	rendered := 0
@@ -338,4 +338,3 @@ func FindPrevSiblingIndex(nodes []TreeNode, idx int) int {
 	}
 	return -1
 }
-
