@@ -2,22 +2,23 @@
 
 Direct ANSI terminal control for Go with zero-allocation rendering. Built for
 sustained 60fps full-screen redraws in cell-based applications (games, dashboards,
-TUIs). Depends only on the standard library and `golang.org/x/sys` (Unix builds).
+TUIs). Depends on `github.com/lixenwraith/color` (RGB, palettes, blending),
+`golang.org/x/sys` and `golang.org/x/term`.
 
 The package bypasses terminfo/termcap entirely and emits ANSI sequences directly.
-Target environments: xterm-compatible terminals on Linux and BSDs, and browsers
-via xterm.js (WASM builds).
+Target environments: xterm-compatible terminals on Linux and BSDs, Windows
+consoles with VT processing, and browsers via xterm.js (WASM builds).
 
 ## Features
 
-- True color (24-bit) and 256-color palette output with automatic capability detection
+- True color (24-bit), 256-color, ANSI 16-color and colorless output with
+  automatic capability detection, and the terminal's own default colors
 - Double-buffered output with cell-level diffing — only changed cells emit sequences
-- Raw stdin parsing: keys, modifiers, UTF-8 runes, SGR mouse, resize
-- Perceptual (Redmean) RGB → 256-palette mapping via O(1) LUT
-- Color blending library: alpha, additive, screen, overlay, soft light
-- Named color palettes for true color and xterm-256
+- Raw stdin parsing: keys, modifiers, UTF-8 runes, SGR mouse, resize, bracketed paste
+- Draws on the controlling terminal when stdin or stdout is redirected (Unix)
+- Perceptual (Redmean) RGB → 256-palette mapping via O(1) LUT, from `color`
 - Panic-safe terminal restoration (`Fini`, `EmergencyReset`)
-- Unix and WASM backends behind a common interface
+- Unix, Windows and WASM backends behind a common interface
 
 ## Architecture
 
@@ -26,11 +27,12 @@ via xterm.js (WASM builds).
             ├── outputBuffer   diffing, ANSI generation, 128KB buffered writer
             ├── inputReader    escape sequence parser, event channel
             └── Backend (interface)
-                  ├── unixBackend   //go:build unix — termios, unix.Poll, SIGWINCH
-                  └── wasmBackend   //go:build wasm — syscall/js, xterm.js bridge
+                  ├── unixBackend     //go:build unix — termios, unix.Poll, SIGWINCH, /dev/tty
+                  ├── windowsBackend  //go:build windows — console modes, VT processing
+                  └── wasmBackend     //go:build wasm — syscall/js, xterm.js bridge
 
-Shared code carries no build tags: cell diffing, ANSI generation, escape parsing,
-service lifecycle. Platform specifics are isolated in the `Backend` implementations.
+Shared code carries no build tags: cell diffing, ANSI generation, escape parsing.
+Platform specifics are isolated in the `Backend` implementations.
 
 ### Rendering pipeline
 
@@ -56,7 +58,10 @@ without scroll side effects.
 ```go
 package main
 
-import "github.com/lixenwraith/terminal"
+import (
+    "github.com/lixenwraith/color"
+    "github.com/lixenwraith/terminal"
+)
 
 func main() {
     term := terminal.New() // color mode auto-detected
@@ -71,13 +76,13 @@ func main() {
     for {
         // Build frame
         for i := range cells {
-            cells[i] = terminal.Cell{Rune: ' ', Bg: terminal.Gunmetal}
+            cells[i] = terminal.Cell{Rune: ' ', Bg: color.Gunmetal}
         }
         msg := "hello"
         for i, ch := range msg {
             // len(msg) to utf8.RuneCountIdString(msg) for non-ASCII
             cells[(h/2)*w+(w-len(msg))/2+i] = terminal.Cell{
-                Rune: ch, Fg: terminal.Amber, Bg: terminal.Gunmetal,
+                Rune: ch, Fg: color.Amber, Bg: color.Gunmetal,
                 Attrs: terminal.AttrBold,
             }
         }
@@ -103,8 +108,8 @@ func main() {
 ```go
 type Cell struct {
     Rune  rune
-    Fg    RGB
-    Bg    RGB
+    Fg    color.RGB
+    Bg    color.RGB
     Attrs Attr
 }
 ```
@@ -112,18 +117,39 @@ type Cell struct {
 `Attr` is a bitmask: `AttrBold`, `AttrDim`, `AttrItalic`, `AttrUnderline`,
 `AttrBlink`, `AttrReverse`.
 
-Two flag bits change color interpretation: with `AttrFg256` / `AttrBg256` set,
-`Fg.R` / `Bg.R` holds an xterm-256 palette index directly and `G`/`B` are
-ignored. This allows exact palette output on true color terminals and skips
-RGB → palette conversion.
+`Attr` is 16 bits wide; the bits above the styles say how to read a cell's
+colors:
+- With `AttrFg256` / `AttrBg256` set, `Fg.R` / `Bg.R` holds an xterm-256
+  palette index directly and `G`/`B` are ignored. This allows exact palette
+  output on true color terminals and skips RGB → palette conversion. Indices
+  0-15 are the ANSI 16, which every terminal shows in its own theme's shades.
+- With `AttrFgDefault` / `AttrBgDefault` set, the color is the terminal's own
+  (SGR 39/49), whatever `Fg` / `Bg` hold: an application keeps a light or
+  dark terminal's background without knowing which it is.
 
 ## Color system
 
 ### Modes
 
 `ColorModeTrueColor` emits `38;2;R;G;B` sequences; `ColorMode256` emits
-`38;5;N` after mapping. `DetectColorMode()` inspects the environment
-(`COLORTERM`, `TERM`). Explicit override: `terminal.New(terminal.ColorMode256)`.
+`38;5;N` after mapping; `ColorMode16` emits `30-37`/`90-97` and
+`40-47`/`100-107`, an RGB or palette color mapped to the nearest ANSI index;
+`ColorModeNone` emits attributes only, so a highlight drawn as a background
+color alone (a list's `CursorBg`) does not show; the `tui` form controls
+mark every selection with a glyph.
+
+`DetectColorMode()` reports what the terminal can show from the environment
+(`COLORTERM`, `TERM`): 16 colors on a text console (`TERM` of `linux`,
+`cons25*`, `vt` and a digit, `ansi` or `*-16color`), whatever `COLORTERM`
+says. In 16 colors every color change restates the style from a reset,
+since a console's bright colors (90-97) also set bold. `New()`
+also honours `NO_COLOR`, choosing `ColorModeNone`; a mode passed to `New`
+overrides both, as a `--color=always` or `never` would. `Init` refuses
+`TERM=dumb`, which cannot address the cursor.
+
+`Init` and `Sync` clear the screen to the terminal's own background.
+`EmergencyReset(os.Stdout)` writes to the controlling terminal when stdout is
+redirected, so the reset never lands in the program's output.
 
 ### RGB → 256 mapping
 
@@ -135,12 +161,12 @@ throughout; degradation is automatic.
 
 Palette helpers: `Cube256(r,g,b)` / `CubeRGB256(idx)` for 6×6×6 cube math,
 `Gray256(step)` for the grayscale ramp, plus named constants (`P256Amber`,
-`P256SteelBlue`, ...) in `rgb_256.go` and named true color values (`Amber`,
-`Gunmetal`, `Obsidian`, ...) in `rgb_truecolor.go`.
+`P256SteelBlue`, ...) and named true color values (`Amber`, `Gunmetal`,
+`Obsidian`, ...), all in `github.com/lixenwraith/color`.
 
 ### Blending
 
-`blend.go` provides compositing primitives operating on `RGB`. All take
+`github.com/lixenwraith/color` provides compositing primitives operating on `RGB`. All take
 destination first and are branch-free in the hot path or LUT-backed; suitable
 for per-cell use at frame rate.
 
@@ -161,12 +187,12 @@ short-circuits without float math. All float→channel conversions round half-up
 so gradients from `Blend`, `Scale`, `Lerp`, and `SoftLight` are bit-consistent.
 
 ```go
-bg := terminal.Gunmetal
-glow := terminal.RGB{R: 255, G: 160, B: 40}
+bg := color.Gunmetal
+glow := color.RGB{R: 255, G: 160, B: 40}
 
-cell.Bg = terminal.Screen(bg, terminal.Scale(glow, pulse), 1.0) // pulsing glow
-cell.Bg = terminal.Blend(cell.Bg, terminal.Black, 0.6)          // dim overlay backdrop
-cell.Fg = terminal.SoftLight(cell.Fg, tint, 0.4)                // subtle recolor
+cell.Bg = color.Screen(bg, color.Scale(glow, pulse), 1.0) // pulsing glow
+cell.Bg = color.Blend(cell.Bg, color.Black, 0.6)          // dim overlay backdrop
+cell.Fg = color.SoftLight(cell.Fg, tint, 0.4)                // subtle recolor
 bar := cold.Lerp(hot, load)                                     // value-mapped gradient
 ```
 
@@ -184,29 +210,21 @@ division approximation; `SoftLight` uses init-time LUTs replacing `math.Sqrt`.
   `MouseAction` (press/release/move/drag), modifiers. Enable via
   `SetMouseMode(MouseModeClick | MouseModeDrag)`; SGR protocol only.
 - `EventResize` — new `Width`/`Height`
+- `EventPaste` — `Text` holds a whole paste, as sent, control characters
+  included. Enable via `SetPasteMode(true)` (bracketed paste); off, a paste
+  arrives as keys, its newlines pressing Enter.
 - `EventError`, `EventClosed`
 
 A standalone ESC press is disambiguated from escape sequences by a short input-idle timeout (one ~10ms poll cycle).
+ESC ESC is Alt+Escape alone, Escape before a paste, and Alt with the key that follows otherwise (rxvt's Alt+arrows).
 Partial UTF-8 and escape sequences at read boundaries are reassembled in a persistent buffer.
+A cell is drawn as one glyph: a control character in `Rune`, such as a pasted escape, is drawn as a space.
+With paste mode off, a paste marker is not a paste. A paste whose end marker never arrives ends once input pauses for a second, so what follows a paste that stalls that long arrives as keys.
+
+On Unix, a redirected stdin or stdout is replaced by `/dev/tty`, so
+`app > out.toml` and `cmd | app` keep both as data while the application
+draws and reads keys on the terminal.
 `PostEvent` injects synthetic events (used for clean shutdown of blocked `PollEvent`).
-
-## Service wrapper
-
-`TerminalService` packages lifecycle (init, input goroutine, panic-safe
-teardown) behind `Init/Start/Stop` for service-registry architectures:
-
-```go
-svc := terminal.NewService()
-svc.Init()
-svc.Start()
-defer svc.Stop()
-
-term := svc.Terminal()
-for ev := range svc.Events() { /* ... */ }
-```
-
-Input-goroutine panics trigger `EmergencyReset` (restores cooked mode, main
-screen, cursor) before printing the stack trace, keeping the shell usable.
 
 ## WASM
 

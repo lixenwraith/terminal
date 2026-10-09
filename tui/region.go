@@ -66,10 +66,10 @@ func (r Region) Inset(n int) Region {
 }
 
 // Cell sets a single cell with bounds checking.
-// A zero-value bg (color.RGB{}) is transparent: the existing cell's
-// background is preserved. Establish a base background first (Fill, or
-// pre-initialized cell buffer). For a literal black background use
-// CellOpaque or Fill(color.RGB{}).
+// A zero-value bg (color.RGB{}) with no Bg color bits in attr is
+// transparent: the existing cell's background is preserved, bits and all.
+// Establish a base background first (Fill, or pre-initialized cell buffer).
+// For a literal black background use CellOpaque or Fill(color.RGB{}).
 func (r Region) Cell(x, y int, ch rune, fg, bg color.RGB, attr terminal.Attr) {
 	if x < 0 || x >= r.W || y < 0 || y >= r.H {
 		return
@@ -85,8 +85,9 @@ func (r Region) Cell(x, y int, ch rune, fg, bg color.RGB, attr terminal.Attr) {
 	idx := absY*r.TotalW + absX
 	// Single bounds check for the backing slice
 	if uint(idx) < uint(len(r.Cells)) {
-		if bg == (color.RGB{}) {
-			bg = r.Cells[idx].Bg // transparent: inherit current background
+		if bg == (color.RGB{}) && attr&terminal.AttrBgColor == 0 {
+			// transparent: inherit current background
+			bg, attr = r.Cells[idx].Bg, attr|r.Cells[idx].Attrs&terminal.AttrBgColor
 		}
 		r.Cells[idx] = terminal.Cell{Rune: ch, Fg: fg, Bg: bg, Attrs: attr}
 	}
@@ -115,9 +116,15 @@ func (r Region) CellOpaque(x, y int, ch rune, fg, bg color.RGB, attr terminal.At
 // Opaque by definition: Fill establishes the base layer, so bg is written
 // verbatim (including zero/black) rather than treated as transparent.
 func (r Region) Fill(bg color.RGB) {
+	r.FillStyle(Style{Bg: bg})
+}
+
+// FillStyle fills the region with spaces in s, opaque as Fill is; a theme's
+// Text fills the panel its widgets draw on
+func (r Region) FillStyle(s Style) {
 	for y := 0; y < r.H; y++ {
 		for x := 0; x < r.W; x++ {
-			r.CellOpaque(x, y, ' ', color.RGB{}, bg, terminal.AttrNone)
+			r.CellOpaque(x, y, ' ', s.Fg, s.Bg, s.Attr)
 		}
 	}
 }

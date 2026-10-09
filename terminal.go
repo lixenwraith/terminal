@@ -7,10 +7,11 @@ import (
 	"sync/atomic"
 
 	"github.com/lixenwraith/color"
+	"golang.org/x/term"
 )
 
-// Attr represents text attributes (bitmask)
-type Attr uint8
+// Attr represents text attributes and how to read a cell's colors (bitmask)
+type Attr uint16
 
 const (
 	AttrNone      Attr = 0
@@ -22,10 +23,18 @@ const (
 	AttrReverse   Attr = 1 << 5
 	AttrFg256     Attr = 1 << 6 // Fg.R is 256-color palette index
 	AttrBg256     Attr = 1 << 7 // Bg.R is 256-color palette index
+	AttrFgDefault Attr = 1 << 8 // Fg is the terminal's own (SGR 39); Fg is ignored
+	AttrBgDefault Attr = 1 << 9 // Bg is the terminal's own (SGR 49); Bg is ignored
 )
 
 // AttrStyle masks only the style bits (excludes color mode flags)
 const AttrStyle Attr = AttrBold | AttrDim | AttrItalic | AttrUnderline | AttrBlink | AttrReverse
+
+// AttrFgColor and AttrBgColor mask the bits that say how to read Fg and Bg
+const (
+	AttrFgColor Attr = AttrFg256 | AttrFgDefault
+	AttrBgColor Attr = AttrBg256 | AttrBgDefault
+)
 
 // Cell represents a single terminal cell
 type Cell struct {
@@ -77,6 +86,10 @@ type Terminal interface {
 	// SetMouseMode enables/disables mouse event reporting
 	// Modes can be combined: MouseModeClick | MouseModeDrag
 	SetMouseMode(mode MouseMode) error
+
+	// SetPasteMode turns bracketed paste on or off: on, a paste arrives as
+	// one EventPaste rather than as keys, so its newlines don't press Enter
+	SetPasteMode(on bool) error
 }
 
 // ResizeEvent represents a terminal resize
@@ -100,18 +113,20 @@ type termImpl struct {
 	initialized bool
 	finalized   bool
 	mouseMode   MouseMode
+	paste       bool
 }
 
-// New creates a new Terminal instance
+// New creates a new Terminal instance. Without a mode it uses
+// DetectColorMode's, or ColorModeNone when NO_COLOR is set; an explicit mode
+// overrides both, as a --color=always or never would
 func New(colorMode ...ColorMode) Terminal {
 	b := newBackend()
 
-	var c ColorMode
-	if len(colorMode) == 0 {
-		// Use backend detection or fallback env detection for unix
-		c = DetectColorMode()
-	} else {
+	c := DetectColorMode()
+	if len(colorMode) > 0 {
 		c = colorMode[0]
+	} else if os.Getenv("NO_COLOR") != "" {
+		c = ColorModeNone
 	}
 
 	t := &termImpl{
@@ -180,7 +195,7 @@ func (t *termImpl) Init() error {
 	}
 
 	// Clear screen
-	t.output.clear(color.Black)
+	t.output.clear(color.RGB{}, AttrBgDefault)
 
 	// Start input reader
 	t.input.start()
@@ -206,6 +221,10 @@ func (t *termImpl) Fini() {
 		w.Write(csiMouseClickOff)
 		w.Write(csiMouseSGROff)
 		w.Flush()
+	}
+
+	if t.paste {
+		t.writeRaw(csiPasteOff)
 	}
 
 	// Stop handlers
@@ -274,7 +293,7 @@ func (t *termImpl) Clear(bg color.RGB) {
 		return
 	}
 
-	t.output.clear(bg)
+	t.output.clear(bg, 0)
 }
 
 // SetCursorVisible shows/hides cursor
@@ -343,7 +362,7 @@ func (t *termImpl) Sync() {
 
 	// Clear terminal before full redraw
 	// Diff-based rendering assumes physical terminal matches front buffer state
-	t.output.clear(color.Black)
+	t.output.clear(color.RGB{}, AttrBgDefault)
 	t.output.forceFullRedraw()
 }
 
@@ -431,21 +450,47 @@ func (t *termImpl) SetMouseMode(mode MouseMode) error {
 	return nil
 }
 
+// SetPasteMode turns bracketed paste on or off
+func (t *termImpl) SetPasteMode(on bool) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if !t.initialized || t.finalized || t.paste == on {
+		return nil
+	}
+	t.paste = on
+	t.input.pasteMode.Store(on)
+	w := t.output.writer
+	if on {
+		w.Write(csiPasteOn)
+	} else {
+		w.Write(csiPasteOff)
+	}
+	return w.Flush()
+}
+
 // writeRaw writes raw bytes to output
 func (t *termImpl) writeRaw(data []byte) {
 	t.backend.Write(data)
 }
 
 // EmergencyReset attempts to restore terminal to sane state
-// Call this from panic recovery if Fini() cannot be called normally
-// EmergencyReset attempts to restore terminal to sane state
-// Call this from panic recovery if Fini() cannot be called normally
+// Call this from panic recovery if Fini() cannot be called normally. Given a
+// redirected stdout, it writes to the controlling terminal instead.
 func EmergencyReset(w io.Writer) {
+	if f, ok := w.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
+		if tty := controllingTTY(); tty != nil {
+			defer tty.Close()
+			w = tty
+		}
+	}
+
 	// Disable mouse tracking
 	w.Write(csiMouseMotionOff)
 	w.Write(csiMouseDragOff)
 	w.Write(csiMouseClickOff)
 	w.Write(csiMouseSGROff)
+	w.Write(csiPasteOff)
 
 	// Write sequences to provided writer
 	w.Write(csiCursorShow)

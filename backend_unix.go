@@ -18,6 +18,7 @@ type unixBackend struct {
 	out     *os.File
 	inFd    int
 	outFd   int
+	tty     *os.File // the controlling terminal, opened for a redirected end
 	oldTerm *term.State
 
 	resizeStopCh chan struct{}
@@ -35,17 +36,41 @@ func newBackend() Backend {
 	}
 }
 
+// Init draws on the controlling terminal in place of a redirected stdin or
+// stdout, so `app > file` and `cmd | app` keep both as data
 func (b *unixBackend) Init() error {
-	if !term.IsTerminal(b.inFd) {
-		return fmt.Errorf("stdin is not a terminal")
+	if os.Getenv("TERM") == "dumb" {
+		return errors.New("TERM=dumb cannot address the cursor")
+	}
+	if !term.IsTerminal(b.inFd) || !term.IsTerminal(b.outFd) {
+		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		if err != nil {
+			return fmt.Errorf("no terminal: %w", err)
+		}
+		b.tty = tty
+		if !term.IsTerminal(b.inFd) {
+			b.in, b.inFd = tty, int(tty.Fd())
+		}
+		if !term.IsTerminal(b.outFd) {
+			b.out, b.outFd = tty, int(tty.Fd())
+		}
 	}
 
 	old, err := term.MakeRaw(b.inFd)
 	if err != nil {
+		b.closeTTY()
 		return err
 	}
 	b.oldTerm = old
 	return nil
+}
+
+// closeTTY closes the controlling terminal Init opened, if any
+func (b *unixBackend) closeTTY() {
+	if b.tty != nil {
+		b.tty.Close()
+		b.tty = nil
+	}
 }
 
 func (b *unixBackend) Fini() {
@@ -57,6 +82,7 @@ func (b *unixBackend) Fini() {
 	if b.oldTerm != nil {
 		term.Restore(b.inFd, b.oldTerm)
 	}
+	b.closeTTY()
 }
 
 // Size delegates to exported WindowSize; getTerminalSize deleted

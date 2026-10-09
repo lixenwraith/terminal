@@ -8,15 +8,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func DetectColorMode() ColorMode {
-	if os.Getenv("WT_SESSION") != "" || os.Getenv("WT_PROFILE_ID") != "" {
-		return ColorModeTrueColor
-	}
-	if ct := os.Getenv("COLORTERM"); ct == "truecolor" || ct == "24bit" {
-		return ColorModeTrueColor
-	}
-	return ColorMode256
-}
+// controllingTTY is nil: Init refuses a redirected stdout, so the library
+// never drew on the console behind one
+func controllingTTY() *os.File { return nil }
 
 func resetTerminalMode() {
 	saneIn := uint32(windows.ENABLE_PROCESSED_INPUT |

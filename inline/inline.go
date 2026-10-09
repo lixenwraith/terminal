@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/lixenwraith/color"
+	"github.com/lixenwraith/terminal/internal/env"
 	"golang.org/x/term"
 )
 
@@ -35,12 +35,15 @@ const (
 	colorMode16
 )
 
-// textConsole reports a TERM limited to 16 colors (Linux VT, FreeBSD syscons,
-// VT100-class). It wins over COLORTERM, which profiles export everywhere.
-func textConsole() bool {
-	term := os.Getenv("TERM")
-	return term == "linux" || term == "ansi" || strings.HasPrefix(term, "cons25") ||
-		strings.HasPrefix(term, "vt") || strings.HasSuffix(term, "-16color")
+// detectColorMode maps what the environment says to a color mode
+func detectColorMode() colorMode {
+	switch env.Colors() {
+	case 16:
+		return colorMode16
+	case 1 << 24:
+		return colorModeTrueColor
+	}
+	return colorMode256
 }
 
 // Printer manages styled output and the live block. Safe for concurrent use.

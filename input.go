@@ -1,10 +1,12 @@
 package terminal
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -14,7 +16,7 @@ type EventType uint8
 const (
 	EventKey EventType = iota
 	EventResize
-	EventPaste  // Future: bracketed paste
+	EventPaste  // Bracketed paste, Text holds it
 	EventMouse  // SGR mouse reporting
 	EventError  // Read error
 	EventClosed // Input closed
@@ -26,9 +28,10 @@ type Event struct {
 	Key       Key
 	Rune      rune
 	Modifiers Modifier
-	Width     int   // For EventResize
-	Height    int   // For EventResize
-	Err       error // For EventError
+	Width     int    // For EventResize
+	Height    int    // For EventResize
+	Err       error  // For EventError
+	Text      string // For EventPaste: the pasted bytes as sent, controls included
 
 	// Mouse event fields
 	MouseX      int
@@ -46,6 +49,13 @@ type inputReader struct {
 
 	// Persistent buffer for stream assembly, not fixed size zero-alloc to avoid corrupting partial UTF-8 at boundary
 	buf []byte
+
+	// Bracketed paste: whether SetPasteMode turned it on, and a paste in
+	// progress, what has arrived of it and when its last bytes did
+	pasteMode atomic.Bool
+	pasting   bool
+	paste     []byte
+	pasteSeen time.Time
 
 	mu      sync.Mutex
 	running bool
@@ -105,10 +115,10 @@ func (r *inputReader) readLoop() {
 
 	// Panic recovery for raw input reader
 	defer func() {
-		if r := recover(); r != nil {
-			EmergencyReset(os.Stdout)
+		if p := recover(); p != nil {
+			EmergencyReset(writerAdapter{r.backend})
 			// Use \r\n for clean output
-			fmt.Fprintf(os.Stderr, "\r\n\x1b[31mINPUT READER CRASHED: %v\x1b[0m\r\n", r)
+			fmt.Fprintf(os.Stderr, "\r\n\x1b[31mINPUT READER CRASHED: %v\x1b[0m\r\n", p)
 			fmt.Fprintf(os.Stderr, "Stack Trace:\r\n%s\r\n", debug.Stack())
 			os.Exit(1)
 		}
@@ -122,11 +132,19 @@ func (r *inputReader) readLoop() {
 			return
 		}
 
+		// A paste whose end marker never comes ends when input pauses, so
+		// keys are never swallowed for good; a read may block (wasm)
+		if r.pasting && time.Since(r.pasteSeen) > pasteIdle {
+			r.paste = append(r.paste, r.buf...)
+			r.buf = r.buf[:0]
+			r.endPaste()
+		}
+
 		if len(data) == 0 {
-			// Timeout (Unix poll) or empty read
-			// Emit pending standalone ESC if present
-			if len(r.buf) == 1 && r.buf[0] == 0x1b {
-				r.sendEvent(Event{Type: EventKey, Key: KeyEscape})
+			// Timeout (Unix poll) or empty read: a pending ESC, or two, was
+			// pressed alone; inside a paste it is text
+			if ev, ok := loneEscape[string(r.buf)]; ok && !r.pasting {
+				r.sendEvent(ev)
 				r.buf = r.buf[:0]
 			}
 			select {
@@ -166,6 +184,26 @@ func (r *inputReader) parseInput(data []byte) int {
 		case <-r.stopCh:
 			return i
 		default:
+		}
+
+		if r.pasting {
+			end := bytes.Index(data[i:], pasteEnd)
+			if end < 0 {
+				// Keep back what could start pasteEnd until more arrives
+				keep := min(n-i, len(pasteEnd)-1)
+				r.paste = append(r.paste, data[i:n-keep]...)
+				r.pasteSeen = time.Now()
+				return n - keep
+			}
+			r.paste = append(r.paste, data[i:i+end]...)
+			r.endPaste()
+			i += end + len(pasteEnd)
+			continue
+		}
+		if r.pasteMode.Load() && bytes.HasPrefix(data[i:], pasteStart) {
+			r.pasting, r.pasteSeen = true, time.Now()
+			i += len(pasteStart)
+			continue
 		}
 
 		b := data[i]
@@ -237,6 +275,21 @@ func (r *inputReader) parseInput(data []byte) int {
 	return i
 }
 
+// loneEscape is what an ESC or two left when input paused was
+var loneEscape = map[string]Event{
+	"\x1b":     {Type: EventKey, Key: KeyEscape},
+	"\x1b\x1b": {Type: EventKey, Key: KeyEscape, Modifiers: ModAlt},
+}
+
+// pasteIdle is how long a paste may pause before it is taken as ended
+var pasteIdle = time.Second
+
+// endPaste sends the paste gathered so far as one event
+func (r *inputReader) endPaste() {
+	r.sendEvent(Event{Type: EventPaste, Text: string(r.paste)})
+	r.pasting, r.paste = false, r.paste[:0]
+}
+
 // utf8SeqLen returns expected UTF-8 sequence length from start byte, 0 if invalid
 func utf8SeqLen(b byte) int {
 	if b < 0x80 {
@@ -260,8 +313,22 @@ func (r *inputReader) parseEscape(data []byte) (int, Event) {
 		return 0, Event{} // Incomplete, wait for more
 	}
 
-	// ESC ESC -> Alt+Escape
-	if data[1] == 0x1b {
+	// ESC ESC: Escape before a paste, Alt and the sequence that follows (rxvt's
+	// Alt+arrows), else Alt+Escape; alone it waits for the timeout
+	if rest := data[1:]; rest[0] == 0x1b {
+		switch {
+		case len(rest) == 1:
+			return 0, Event{}
+		case bytes.HasPrefix(rest, pasteStart):
+			return 1, Event{Type: EventKey, Key: KeyEscape}
+		case rest[1] == '[' || rest[1] == 'O':
+			n, ev := r.parseEscape(rest)
+			if n == 0 {
+				return 0, Event{}
+			}
+			ev.Modifiers |= ModAlt
+			return n + 1, ev
+		}
 		return 2, Event{Type: EventKey, Key: KeyEscape, Modifiers: ModAlt}
 	}
 

@@ -2,9 +2,11 @@
 //
 // # Features
 //
-//   - True color (24-bit) and 256-color palette support
+//   - True color (24-bit), 256-color, ANSI 16-color and colorless output, and
+//     the terminal's own default colors
 //   - Double-buffered output with cell-level diffing
-//   - Raw stdin input parsing with escape sequence handling
+//   - Raw input parsing with escape sequence handling and bracketed paste
+//   - Drawing on /dev/tty when stdin or stdout is redirected (Unix)
 //   - Resize detection (SIGWINCH on Unix, callback on WASM)
 //   - Clean terminal restoration on exit/panic
 //
@@ -24,7 +26,7 @@
 //	└── wasmBackend  (//go:build wasm)  - syscall/js, callbacks
 //
 // Shared code (no build tags): Terminal interface, cell diffing, ANSI generation,
-// escape sequence parsing, service lifecycle.
+// escape sequence parsing.
 //
 // # WASM Integration
 //
@@ -45,4 +47,3 @@
 // Target environments: Linux, macOS, BSDs with xterm-compatible terminals, and
 // modern browsers with xterm.js.
 package terminal
-

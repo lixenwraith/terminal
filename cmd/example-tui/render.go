@@ -14,9 +14,18 @@ import (
 
 // --- palettes ---------------------------------------------------------------
 
+// colors are one palette's roles
+type colors struct {
+	Bg, Fg, FocusBg, CursorBg                color.RGB
+	Selected, Unselected, Partial, Error     color.RGB
+	Warning, Border, HeaderBg, HeaderFg      color.RGB
+	StatusFg, HintFg, InputBg, DirFg, FileFg color.RGB
+	SymbolFg                                 color.RGB
+}
+
 type palette struct {
 	name                                  string
-	th                                    tui.Theme
+	th                                    colors
 	accent, accent2                       color.RGB
 	hexNull, hexPrint, hexSpace, hexCtrl  color.RGB
 	hexHigh, matchBg, matchCurBg, markDim color.RGB
@@ -25,7 +34,7 @@ type palette struct {
 var palettes = []palette{
 	{ // Tokyo Night
 		name: "tokyonight",
-		th: tui.Theme{
+		th: colors{
 			Bg: color.RGB{26, 27, 38}, Fg: color.RGB{192, 202, 245},
 			FocusBg: color.RGB{35, 36, 48}, CursorBg: color.RGB{45, 50, 80},
 			Selected: color.RGB{158, 206, 106}, Unselected: color.RGB{86, 95, 137},
@@ -45,7 +54,7 @@ var palettes = []palette{
 	},
 	{ // One Dark
 		name: "onedark",
-		th: tui.Theme{
+		th: colors{
 			Bg: color.RGB{40, 44, 52}, Fg: color.RGB{171, 178, 191},
 			FocusBg: color.RGB{47, 52, 63}, CursorBg: color.RGB{62, 68, 81},
 			Selected: color.RGB{152, 195, 121}, Unselected: color.RGB{92, 99, 112},
