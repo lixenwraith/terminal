@@ -46,12 +46,18 @@ passes it to `Flush`. The output buffer diffs against the previously flushed fra
 - If the backend size changed between buffer preparation and `Flush`, the frame
   is dropped to prevent resize-race corruption. The next frame (built at the new
   size) renders normally.
+- A cell is one glyph in one column, on a terminal that draws ambiguous-width
+  runes (box drawing, U+FFFD) narrow: a control or format character in `Rune`
+  (a pasted escape, a bidi override, a line separator) is drawn as a space,
+  and a rune a terminal draws in no column, in two or in its neighbour's
+  cluster (a combining or spacing mark, a wide or emoji rune) as U+FFFD.
 
 `Sync()` clears the screen and invalidates the front buffer, forcing a full
 redraw — required after any external process writes to the terminal.
 
-Auto-wrap is disabled during the session, making the bottom-right cell writable
-without scroll side effects.
+Auto-wrap and, where the terminal follows ECMA-48 mode 8 (VTE), its own bidi
+reordering are off during the session: the bottom-right cell is writable
+without scroll side effects, and right-to-left text stays in its cells.
 
 ## Quick start
 
@@ -170,17 +176,15 @@ Palette helpers: `Cube256(r,g,b)` / `CubeRGB256(idx)` for 6×6×6 cube math,
 destination first and are branch-free in the hot path or LUT-backed; suitable
 for per-cell use at frame rate.
 
-| Function | Operation | Character |
-|---|---|---|
-| `Blend(dst, src, alpha)` | linear interpolation | standard transparency |
-| `Add(dst, src, alpha)` | saturating add | bright accumulation, clips |
-| `Screen(dst, src, alpha)` | `1-(1-d)(1-s)` | lightens, never clips |
-| `Overlay(dst, src, alpha)` | multiply/screen split at 0.5 | contrast, keeps dst structure |
-| `SoftLight(dst, src, intensity)` | Perez soft light | gentle tint/glow |
-| `Max(dst, src, alpha)` | per-channel max | non-additive highlight |
-| `Scale(c, factor)` | channel multiply | dim/brighten |
-| `Grayscale(c)` | Rec. 601 luma | desaturation |
-| `c.Lerp(other, t)` | method on `RGB` | gradients, animation |
+- `Blend(dst, src, alpha)`: linear interpolation, standard transparency
+- `Add(dst, src, alpha)`: saturating add, bright accumulation, clips
+- `Screen(dst, src, alpha)`: `1-(1-d)(1-s)`, lightens, never clips
+- `Overlay(dst, src, alpha)`: multiply/screen split at 0.5, contrast, keeps dst structure
+- `SoftLight(dst, src, intensity)`: Perez soft light, gentle tint/glow
+- `Max(dst, src, alpha)`: per-channel max, non-additive highlight
+- `Scale(c, factor)`: channel multiply, dim/brighten
+- `Grayscale(c)`: Rec. 601 luma, desaturation
+- `c.Lerp(other, t)`: method on `RGB`, gradients, animation
 
 `alpha`/`intensity`/`t` are `[0,1]`; out-of-range values clamp. `alpha` of 0 or 1
 short-circuits without float math. All float→channel conversions round half-up,
@@ -218,7 +222,6 @@ division approximation; `SoftLight` uses init-time LUTs replacing `math.Sqrt`.
 A standalone ESC press is disambiguated from escape sequences by a short input-idle timeout (one ~10ms poll cycle).
 ESC ESC is Alt+Escape alone, Escape before a paste, and Alt with the key that follows otherwise (rxvt's Alt+arrows).
 Partial UTF-8 and escape sequences at read boundaries are reassembled in a persistent buffer.
-A cell is drawn as one glyph: a control character in `Rune`, such as a pasted escape, is drawn as a space.
 With paste mode off, a paste marker is not a paste. A paste whose end marker never arrives ends once input pauses for a second, so what follows a paste that stalls that long arrives as keys.
 
 On Unix, a redirected stdin or stdout is replaced by `/dev/tty`, so

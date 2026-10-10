@@ -40,7 +40,6 @@ func (wa writerAdapter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// newOutputBuffer creates a new output buffer
 func newOutputBuffer(backend Backend, colorMode ColorMode) *outputBuffer {
 	// Use 128KB buffer for minimal calls to backend
 	adapter := writerAdapter{b: backend}
@@ -50,7 +49,6 @@ func newOutputBuffer(backend Backend, colorMode ColorMode) *outputBuffer {
 	}
 }
 
-// resize updates buffer dimensions
 func (o *outputBuffer) resize(width, height int) {
 	size := width * height
 	if cap(o.front) < size {
@@ -68,9 +66,8 @@ func (o *outputBuffer) resize(width, height int) {
 	o.cursorValid = false
 }
 
-// cellEqual compares two cells for equality (standalone for inlining)
+// cellEqual compares the fields most likely to change first
 func cellEqual(a, b Cell) bool {
-	// A cell is only equal if every visual component matches, checking most likely changed fields first (Rune/Bg)
 	return a.Rune == b.Rune &&
 		a.Bg == b.Bg &&
 		a.Fg == b.Fg &&
@@ -93,13 +90,12 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	for y := 0; y < height; y++ {
 		rowStart := y * width
 
-		// Early termination: find last dirty cell in row (scan backward)
 		rowEnd := width
 		for rowEnd > 0 && cellEqual(cells[rowStart+rowEnd-1], o.front[rowStart+rowEnd-1]) {
 			rowEnd--
 		}
 		if rowEnd == 0 {
-			continue // Entire row unchanged
+			continue
 		}
 
 		x := 0
@@ -111,13 +107,11 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 				continue
 			}
 
-			// Found dirty cell - check for small gaps ahead to potentially merge segments
 			segStart := x
 			segEnd := x + 1
 
-			// Extend segment through small gaps (≤3 unchanged cells)
+			// A gap of up to 3 unchanged cells is rewritten, about the bytes of a cursor move
 			for segEnd < rowEnd {
-				// Find gap size
 				gapStart := segEnd
 				for gapStart < rowEnd && cellEqual(cells[rowStart+gapStart], o.front[rowStart+gapStart]) {
 					gapStart++
@@ -125,7 +119,6 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 				gapSize := gapStart - segEnd
 
 				if gapSize == 0 {
-					// No gap, extend to next unchanged
 					for segEnd < rowEnd && !cellEqual(cells[rowStart+segEnd], o.front[rowStart+segEnd]) {
 						segEnd++
 					}
@@ -133,16 +126,15 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 				}
 
 				if gapSize > 3 {
-					break // Gap too large, end segment here
+					break
 				}
 
-				// Gap logic check: only bridge the gap if the gap cells have the same attributes as the current segment, otherwise, emit SGR codes inside the gap, making it more expensive than a cursor move
+				// Only a gap in the segment's style: an SGR inside it costs more than the move
 				gapCompatible := true
-				refCell := cells[rowStart+segEnd-1] // The last dirty cell of the current segment
+				refCell := cells[rowStart+segEnd-1]
 
 				for k := 0; k < gapSize; k++ {
 					gCell := cells[rowStart+segEnd+k]
-					// Strict equality on style/color to ensure no SGR emission
 					if gCell.Fg != refCell.Fg || gCell.Bg != refCell.Bg || gCell.Attrs != refCell.Attrs {
 						gapCompatible = false
 						break
@@ -150,41 +142,30 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 				}
 
 				if !gapCompatible {
-					break // Gap has different style, cheaper to jump
+					break
 				}
 
-				// Check if there's more dirty content after gap
 				if gapStart >= rowEnd {
-					break // Gap extends to row end
+					break
 				}
 
-				// Small gap with content after - include gap in segment
 				segEnd = gapStart
-				// Continue to find more dirty cells
 				for segEnd < rowEnd && !cellEqual(cells[rowStart+segEnd], o.front[rowStart+segEnd]) {
 					segEnd++
 				}
 			}
 
-			// Positions cursor to segment start
 			o.moveCursorTo(w, segStart, y)
 
-			// Write segment [segStart, segEnd)
 			for sx := segStart; sx < segEnd; sx++ {
 				cidx := rowStart + sx
 				c := cells[cidx]
 
 				o.writeStyleCoalesced(w, c.Fg, c.Bg, c.Attrs)
-
-				// A cell holds one glyph, never a control the terminal would act on
-				r := c.Rune
-				if unicode.IsControl(r) || !utf8.ValidRune(r) {
-					r = ' '
-				}
-				if r < 0x80 {
+				if r := c.Rune; r >= ' ' && r < 0x7f {
 					w.WriteByte(byte(r))
 				} else {
-					w.WriteRune(r)
+					w.WriteRune(oneColumn(r))
 				}
 
 				o.front[cidx] = c
@@ -200,7 +181,90 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	w.Flush()
 }
 
-// cursorForwardCost returns byte cost of cursor forward sequence
+// oneColumn is r as a cell draws it: one glyph in one column, where the
+// terminal draws ambiguous-width runes (box drawing, U+FFFD) narrow
+func oneColumn(r rune) rune {
+	if uint32(r) < 0x10000 && plain[r>>6]&(1<<(r&63)) != 0 {
+		return r
+	}
+	if !utf8.ValidRune(r) {
+		return ' '
+	}
+	for _, k := range drawnAs {
+		if unicode.In(r, k.runes...) {
+			return k.as
+		}
+	}
+	return r
+}
+
+// drawnAs is the glyph a cell draws for each kind of rune that would not take
+// one column: a space for one a terminal acts on, hides or reorders text by
+// (a control, a format character, a line separator), U+FFFD for one it draws
+// in none or two or joins to a neighbour (a mark, a wide or emoji rune)
+var drawnAs = [...]struct {
+	as    rune
+	runes []*unicode.RangeTable
+}{
+	{' ', []*unicode.RangeTable{unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp}},
+	{utf8.RuneError, []*unicode.RangeTable{wideOrJoining, unicode.Mn, unicode.Me, unicode.Mc}},
+}
+
+// plain has a bit set for each BMP rune a cell draws as itself, so most text
+// skips drawnAs's searches
+var plain = func() (p [0x10000 >> 6]uint64) {
+	for i := range p {
+		if i < 0xD800>>6 || i >= 0xE000>>6 {
+			p[i] = ^uint64(0)
+		}
+	}
+	for _, k := range drawnAs {
+		for _, t := range k.runes {
+			for _, r := range t.R16 {
+				for c := int(r.Lo); c <= int(r.Hi); c += int(r.Stride) {
+					p[c>>6] &^= 1 << (c & 63)
+				}
+			}
+		}
+	}
+	return p
+}()
+
+// wideOrJoining is what a terminal draws in two columns, East Asian wide and
+// fullwidth and emoji presentation as of Unicode 17, and the letters a
+// grapheme cluster joins to a neighbour (Hangul jamo, Prepend, SpacingMark and
+// Extend ones); a range spans the unassigned code points between its runes
+var wideOrJoining = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{0x0D4E, 0x0D4E, 1}, {0x0E33, 0x0E33, 1}, {0x0EB3, 0x0EB3, 1},
+		{0x1100, 0x11FF, 1}, {0x231A, 0x231B, 1}, {0x2329, 0x232A, 1}, {0x23E9, 0x23EC, 1},
+		{0x23F0, 0x23F0, 1}, {0x23F3, 0x23F3, 1}, {0x25FD, 0x25FE, 1}, {0x2614, 0x2615, 1},
+		{0x2630, 0x2637, 1}, {0x2648, 0x2653, 1}, {0x267F, 0x267F, 1}, {0x268A, 0x268F, 1},
+		{0x2693, 0x2693, 1}, {0x26A1, 0x26A1, 1}, {0x26AA, 0x26AB, 1}, {0x26BD, 0x26BE, 1},
+		{0x26C4, 0x26C5, 1}, {0x26CE, 0x26CE, 1}, {0x26D4, 0x26D4, 1}, {0x26EA, 0x26EA, 1},
+		{0x26F2, 0x26F3, 1}, {0x26F5, 0x26F5, 1}, {0x26FA, 0x26FA, 1}, {0x26FD, 0x26FD, 1},
+		{0x2705, 0x2705, 1}, {0x270A, 0x270B, 1}, {0x2728, 0x2728, 1}, {0x274C, 0x274C, 1},
+		{0x274E, 0x274E, 1}, {0x2753, 0x2755, 1}, {0x2757, 0x2757, 1}, {0x2795, 0x2797, 1},
+		{0x27B0, 0x27B0, 1}, {0x27BF, 0x27BF, 1}, {0x2B1B, 0x2B1C, 1}, {0x2B50, 0x2B50, 1},
+		{0x2B55, 0x2B55, 1}, {0x2E80, 0x303E, 1}, {0x3041, 0x3247, 1}, {0x3250, 0xA4C6, 1},
+		{0xA960, 0xA97C, 1}, {0xAC00, 0xD7FF, 1}, {0xF900, 0xFAFF, 1}, {0xFE10, 0xFE19, 1},
+		{0xFE30, 0xFE6B, 1}, {0xFF01, 0xFF60, 1}, {0xFF9E, 0xFF9F, 1}, {0xFFE0, 0xFFE6, 1},
+	},
+	R32: []unicode.Range32{
+		{0x111C2, 0x111C3, 1}, {0x113D1, 0x113D1, 1}, {0x1193F, 0x1193F, 1}, {0x11941, 0x11941, 1},
+		{0x11A84, 0x11A89, 1}, {0x11D46, 0x11D46, 1}, {0x11F02, 0x11F02, 1},
+		{0x16FE0, 0x1B2FB, 1}, {0x1D300, 0x1D376, 1}, {0x1F004, 0x1F004, 1}, {0x1F0CF, 0x1F0CF, 1},
+		{0x1F18E, 0x1F18E, 1}, {0x1F191, 0x1F19A, 1}, {0x1F1E6, 0x1F320, 1}, {0x1F32D, 0x1F335, 1},
+		{0x1F337, 0x1F37C, 1}, {0x1F37E, 0x1F393, 1}, {0x1F3A0, 0x1F3CA, 1}, {0x1F3CF, 0x1F3D3, 1},
+		{0x1F3E0, 0x1F3F0, 1}, {0x1F3F4, 0x1F3F4, 1}, {0x1F3F8, 0x1F43E, 1}, {0x1F440, 0x1F440, 1},
+		{0x1F442, 0x1F4FC, 1}, {0x1F4FF, 0x1F53D, 1}, {0x1F54B, 0x1F54E, 1}, {0x1F550, 0x1F567, 1},
+		{0x1F57A, 0x1F57A, 1}, {0x1F595, 0x1F596, 1}, {0x1F5A4, 0x1F5A4, 1}, {0x1F5FB, 0x1F64F, 1},
+		{0x1F680, 0x1F6C5, 1}, {0x1F6CC, 0x1F6CC, 1}, {0x1F6D0, 0x1F6D2, 1}, {0x1F6D5, 0x1F6DF, 1},
+		{0x1F6EB, 0x1F6EC, 1}, {0x1F6F4, 0x1F6FC, 1}, {0x1F7E0, 0x1F7F0, 1}, {0x1F90C, 0x1F93A, 1},
+		{0x1F93C, 0x1F945, 1}, {0x1F947, 0x1F9FF, 1}, {0x1FA70, 0x1FAF8, 1}, {0x20000, 0x3FFFF, 1},
+	},
+}
+
 func cursorForwardCost(n int) int {
 	if n == 1 {
 		return 3 // \x1b[C
@@ -208,13 +272,12 @@ func cursorForwardCost(n int) int {
 	return 3 + digitCount(n) // \x1b[nC
 }
 
-// cursorAbsoluteCost returns byte cost of absolute cursor position
 func cursorAbsoluteCost(x, y int) int {
 	// \x1b[row;colH = 2 + digits(row) + 1 + digits(col) + 1
 	return 4 + digitCount(y+1) + digitCount(x+1)
 }
 
-// digitCount returns number of decimal digits in n
+// digitCount caps at 4: no terminal is 10000 cells across
 func digitCount(n int) int {
 	if n < 10 {
 		return 1
@@ -260,7 +323,6 @@ func (o *outputBuffer) writeStyleCoalesced(w *bufio.Writer, fg, bg color.RGB, at
 	if o.colorMode == ColorModeNone {
 		fg, bg, attr = color.RGB{}, color.RGB{}, attr&AttrStyle
 	}
-	// Check what changed
 	fgChanged := !o.lastValid || fg != o.lastFg || (attr&AttrFgColor) != (o.lastAttr&AttrFgColor)
 	bgChanged := !o.lastValid || bg != o.lastBg || (attr&AttrBgColor) != (o.lastAttr&AttrBgColor)
 	styleAttr := attr & AttrStyle
@@ -348,7 +410,6 @@ func (o *outputBuffer) writeColor(w *bufio.Writer, c color.RGB, palette, deflt b
 	}
 }
 
-// forceFullRedraw clears front buffer to force complete redraw
 func (o *outputBuffer) forceFullRedraw() {
 	for i := range o.front {
 		o.front[i] = Cell{Rune: 0}
@@ -376,7 +437,6 @@ func (o *outputBuffer) clear(bg color.RGB, attr Attr) {
 	}
 }
 
-// invalidateCursor marks cursor position as unknown
 func (o *outputBuffer) invalidateCursor() {
 	o.cursorValid = false
 }

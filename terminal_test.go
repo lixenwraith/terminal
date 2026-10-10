@@ -89,14 +89,32 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 	}
 }
 
-// A cell is drawn as one glyph: a control character, C0 or C1, that a
-// pasted value carried in, or no rune at all, is drawn as a space, never
-// sent to the terminal
+// A cell is drawn as one glyph: a control character, C0 or C1, a format one
+// (a bidi control, a zero-width space) or a line separator that a pasted
+// value or a log line carried in, or no rune at all, is drawn as a space,
+// never sent to the terminal
 func TestCellsSendNoControlCharacters(t *testing.T) {
 	f := &fakeBackend{}
 	o := newOutputBuffer(f, ColorMode256)
-	o.flush([]Cell{{Rune: 0x1b}, {Rune: 0x9b}, {Rune: 0x7f}, {Rune: -229}, {Rune: 'é'}}, 5, 1)
-	if got, want := f.written(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m    é\x1b[0m"; got != want {
+	o.flush([]Cell{{Rune: 0x1b}, {Rune: 0x9b}, {Rune: 0x7f}, {Rune: -229}, {Rune: 0xd800}, {Rune: 0x202e}, {Rune: 0x2067}, {Rune: 0x061c}, {Rune: 0x200b}, {Rune: 0x2028}, {Rune: 'é'}}, 11, 1)
+	if got, want := f.written(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m          é\x1b[0m"; got != want {
+		t.Fatalf("%q, want %q", got, want)
+	}
+}
+
+// A cell is one column: a rune a terminal draws in none (a combining mark, a
+// joining jamo), in two (wide, fullwidth, emoji) or in its neighbour's cluster
+// (a spacing mark, a letter such as Thai's sara am) is drawn as U+FFFD, any
+// other as itself
+func TestEachCellIsOneColumn(t *testing.T) {
+	f := &fakeBackend{}
+	o := newOutputBuffer(f, ColorMode256)
+	var row []Cell
+	for _, r := range "\u0301\u20dd\u1161漢Ａ😀✅\U0001f1fa\u093e\u0e33é─❤" {
+		row = append(row, Cell{Rune: r})
+	}
+	o.flush(row, len(row), 1)
+	if got, want := f.written(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m"+strings.Repeat("\ufffd", 10)+"é─❤\x1b[0m"; got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }
@@ -187,8 +205,9 @@ func TestPasteModeReachesTheReader(t *testing.T) {
 	}
 }
 
-// Paste mode ends with the session, and Init clears to the terminal's own
-// background rather than painting it black
+// The terminal's own bidi reordering is off while the session runs, paste
+// mode ends with it, and Init clears to the terminal's own background rather
+// than painting it black
 func TestSessionLeavesTheTerminalAsItFoundIt(t *testing.T) {
 	f := &fakeBackend{}
 	term := &termImpl{backend: f, syntheticCh: make(chan Event, 1), resizeCh: make(chan ResizeEvent, 1)}
@@ -204,5 +223,8 @@ func TestSessionLeavesTheTerminalAsItFoundIt(t *testing.T) {
 	if !strings.Contains(got, "\x1b[0m\x1b[49m\x1b[2J") || !strings.Contains(got, "\x1b[?2004h") ||
 		!strings.Contains(got[strings.Index(got, "\x1b[?2004h"):], "\x1b[?2004l") {
 		t.Fatalf("%q", got)
+	}
+	if i := strings.Index(got, "\x1b[8l"); i < 0 || !strings.Contains(got[i:], "\x1b[8h") {
+		t.Fatalf("bidi reordering not off for the session: %q", got)
 	}
 }

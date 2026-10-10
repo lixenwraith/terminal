@@ -125,9 +125,11 @@ draws alike in each: `DefaultTheme` is dark true color, `Theme16` uses the
 ANSI 16 on the terminal's own background, `MonoTheme` uses attributes
 alone, and `ThemeFor(term.ColorMode())` picks among them. A selection
 always changes a glyph (a radio mark, a pointer, the focus mark), so it reads
-without color. `GlyphsUnicode`, `GlyphsCP437` (text consoles) and
-`GlyphsASCII` (outside UTF-8) are the glyph sets; `Glyphs.Line` is the line
-type of frames, rules and wires.
+without color. A reverse-video `Selected` with no color of its own
+(`Theme16`, `MonoTheme`) keeps the terminal's own foreground in every cell
+drawn on it, so the cursor row is one bar. `GlyphsUnicode`, `GlyphsCP437`
+(text consoles) and `GlyphsASCII` (outside UTF-8) are the glyph sets;
+`Glyphs.Line` is the line type of frames, rules and wires.
 
 ```go
 th := tui.DefaultTheme
@@ -257,8 +259,8 @@ Pure logic, no rendering — usable independently:
 
 ## Notes
 
-- Width calculations count runes, not terminal columns; East Asian wide
-  characters and combining marks are not width-aware.
+- Width calculations count runes, one column each, as `Flush` draws a wide or
+  joining rune as U+FFFD.
 - Zero-value `color.RGB` in style fields generally means "inherit"
   (widget default or row background) — check specific widget docs. A zero
   background with no Bg color bits is transparent: the cell keeps the
