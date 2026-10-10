@@ -25,11 +25,17 @@ func (s Style) IsZero() bool {
 }
 
 // On returns s drawn on bg: s's foreground, bg's background (s's own where
-// bg's is transparent), and the attributes of both
+// bg's is transparent), and the attributes of both. On a reverse bg with no
+// color of its own, s keeps only its background, with the terminal's own
+// foreground and bg's styles: a reversed cell's background is its foreground
+// (a console's keeps its intensity), so mixed styles would break the bar.
 func (s Style) On(bg Style) Style {
 	out := Style{Fg: s.Fg, Bg: s.Bg, Attr: s.Attr | bg.Attr&terminal.AttrStyle}
 	if bg.Bg != (color.RGB{}) || bg.Attr&terminal.AttrBgColor != 0 {
 		out.Bg, out.Attr = bg.Bg, out.Attr&^terminal.AttrBgColor|bg.Attr&terminal.AttrBgColor
+	}
+	if bg.Attr&terminal.AttrReverse != 0 && bg.Bg == (color.RGB{}) && bg.Attr&terminal.AttrBg256 == 0 {
+		out.Fg, out.Attr = color.RGB{}, terminal.AttrFgDefault|out.Attr&terminal.AttrBgColor|bg.Attr&terminal.AttrStyle
 	}
 	return out
 }
