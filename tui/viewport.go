@@ -1,5 +1,7 @@
 package tui
 
+import "github.com/lixenwraith/terminal"
+
 // ViewportScroll manages row-based scroll for content regions
 // Distinct from ScrollState which is item-index based
 type ViewportScroll struct {
@@ -116,4 +118,25 @@ func (v *ViewportScroll) EnsureRange(y, h int) {
 		v.Offset = y + h - v.ViewportH
 	}
 	v.clamp()
+}
+
+// Window shows content h rows tall through the region, from v's offset:
+// draw paints a buffer as wide as the region and h tall, filled with bg, and
+// the rows in view are copied. Window sets v's heights; a caller keeping a
+// row in view sets them first and calls EnsureRange.
+func (r Region) Window(h int, v *ViewportScroll, bg Style, draw func(Region)) {
+	h = max(0, h)
+	v.SetDimensions(h, r.H)
+	if r.W <= 0 || r.H <= 0 {
+		return
+	}
+	cells := make([]terminal.Cell, r.W*h)
+	full := NewRegion(cells, r.W, 0, 0, r.W, h)
+	full.FillStyle(bg)
+	draw(full)
+	shown := min(r.H, h-v.Offset)
+	for y := range shown {
+		copy(r.Cells[(r.Y+y)*r.TotalW+r.X:][:r.W], cells[(v.Offset+y)*r.W:][:r.W])
+	}
+	r.Sub(0, shown, r.W, r.H-shown).FillStyle(bg)
 }
