@@ -258,12 +258,14 @@ func (t *TextFieldState) MoveToEnd() {
 
 // --- Scroll management ---
 
-// AdjustScroll updates scroll to keep cursor visible within viewport width
+// AdjustScroll updates scroll to keep the cursor visible within viewport
+// width, and the viewport filled up to the end of the text
 func (t *TextFieldState) AdjustScroll(viewportW int) {
 	if viewportW <= 0 {
 		return
 	}
 	t.clampCursor()
+	t.Scroll = min(t.Scroll, max(0, len(t.Text)+1-viewportW))
 	if t.Cursor < t.Scroll {
 		t.Scroll = t.Cursor
 	}

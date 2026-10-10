@@ -94,7 +94,8 @@ r.TextStyled(x, y, s, tui.Style{Fg: fg, Bg: bg, Attr: attr})
 
 String utilities operate on rune counts: `RuneLen`, `Truncate` /
 `TruncateLeft` / `TruncateMiddle` (ellipsis variants), `PadLeft` / `PadRight` /
-`PadCenter`, `WrapText`.
+`PadCenter`, `WrapText` (at line breaks and spaces; a path or key longer than
+the line breaks after `.`, `,`, `:`, `/`, `[` or `]`).
 
 `Style{Fg, Bg, Attr}` bundles cell appearance; most widget option structs
 accept it.
@@ -105,7 +106,7 @@ Widgets are stateless render functions (mostly `Region` methods). Application
 state lives in plain structs passed by pointer. Available renderers:
 
 boxes and lines (`Box`, `BoxFilled`, `HLine`, `VLine` — single, double,
-rounded, heavy line types), `List`, `Table`, `Tree`, `TabBar`, `KeyValue` /
+rounded, heavy, dashed and ASCII line types), `List`, `Table`, `Tree`, `TabBar`, `KeyValue` /
 `KeyValueWrap`, `Progress` / `ProgressV` / `Gauge` / `Spinner`,
 `ProgressOverlay`, `Sparkline` / `SparklineV`, `Input` / `TextField`,
 `Editor`, `Modal` / `Overlay` / `ConfirmDialog`, `ScrollBar` /
@@ -122,9 +123,11 @@ role's `Attr` may carry color bits, a palette index or the terminal's own
 color, so an application builds one theme per color tier and every control
 draws alike in each: `DefaultTheme` is dark true color, `Theme16` uses the
 ANSI 16 on the terminal's own background, `MonoTheme` uses attributes
-alone, and `ThemeFor(term.ColorMode())` picks among them. A selection always changes a glyph (brackets, a pointer,
-the focus mark), so it reads without color. `GlyphsUnicode`, `GlyphsCP437`
-(text consoles) and `GlyphsASCII` (outside UTF-8) are the glyph sets.
+alone, and `ThemeFor(term.ColorMode())` picks among them. A selection
+always changes a glyph (a radio mark, a pointer, the focus mark), so it reads
+without color. `GlyphsUnicode`, `GlyphsCP437` (text consoles) and
+`GlyphsASCII` (outside UTF-8) are the glyph sets; `Glyphs.Line` is the line
+type of frames, rules and wires.
 
 ```go
 th := tui.DefaultTheme
@@ -136,7 +139,7 @@ value.TextInput(port, "8080", focus.Index == 0, th) // the default as placeholde
 y += rows
 
 value, rows = form.Field(y, 10, tui.Field{Label: "format"}, focus.Index == 1, th)
-value.Choice(0, 0, []string{"raw", "txt", "json"}, format, th) // raw [txt] json
+value.Radio(0, 0, []string{"raw", "txt", "json"}, format, th) // ○ raw  ● txt  ○ json
 y += rows
 
 form.Group(y, "tls", "on, pinned", tlsOpen, focus.Index == 2, th)
@@ -144,16 +147,29 @@ form.Group(y, "tls", "on, pinned", tlsOpen, focus.Index == 2, th)
 
 - `Focus` is the focus ring: `HandleKey` moves it on Tab and Shift+Tab.
 - `Field` draws the focus mark, the label, the required mark, and the error,
-  or the help while focused, and returns the region for the value.
-- `TextInput` draws a `TextFieldState`, its placeholder muted while empty.
+  or the help while focused, wrapped, and returns the region for the value.
+  The label leaves the value at least half the row; label width 0 stacks the
+  label above the value, for narrow screens.
+- `TextInput` draws a `TextFieldState`, its placeholder muted while empty,
+  scrolled to the cursor with a muted `…` where text is out of view.
   `TextFieldState.Accept` filters typed and pasted runes (`AcceptInteger`,
   `AcceptNumber`); `Paste` inserts an `EventPaste`'s text with line breaks
   as spaces and control characters dropped.
-- `Choice` draws a segmented choice; `StepChoice` moves it on Left and Right.
+- `Radio` draws radio buttons in a row, the chosen one marked; too wide, it
+  shows the chosen one and its neighbours. `StepChoice` moves it on Left and
+  Right.
 - `Toggle` draws an on/off switch.
 - `Group` draws a foldable group's header, and its summary while folded.
 - `OptionListState` and `OptionList` filter options by what is typed,
-  matching name or hint regardless of case.
+  matching name or hint regardless of case. Hints sit beside the names, or,
+  narrow, the cursor's hint wraps below them; `Rows(w)` is the height to
+  size a dialog by. With `Menu` there is no filter and `Pick` finds an
+  option by its `Key`, shown before its name.
+- `Frame` fills a region, borders it with its title, and returns the inside;
+  sized with `Center` to what it holds, a dialog ends on its last line.
+- `Rule` draws a line with a title and a hint, dropping the hint first.
+- `Wires` lay lines on a grid by the arms that meet in each cell (`H`, `V`),
+  and `DrawWires` draws every junction, tee and crossing joined.
 
 ### Scrollable list with scrollbar
 
@@ -229,7 +245,9 @@ Pure logic, no rendering — usable independently:
 - `ScrollState` — item-index scrolling with selection
   (`SelectNext/Prev`, `EnsureVisible`, `PageUp/Down`, `AtTop/AtBottom`)
 - `ViewportScroll` — row-based content scrolling with viewport clipping
-  (`ClipToViewport` maps content rows to visible rows)
+  (`ClipToViewport` maps content rows to visible rows, `EnsureRange` keeps a
+  range in view); `Region.Window` draws content taller than the region off
+  screen and shows the rows in view
 - `TreeState` + `TreeExpansion` + `TreeBuilder` — cursor/scroll, expand/collapse
   keyed state, hierarchical → flat visible-node list
 - `EditorState`, `TextFieldState` — text content, cursor, scroll, key handling

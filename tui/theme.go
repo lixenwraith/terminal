@@ -25,18 +25,19 @@ type Theme struct {
 // it reads without color. A text console's font takes GlyphsCP437, a
 // terminal outside UTF-8 GlyphsASCII.
 type Glyphs struct {
-	Focus    rune // beside the focused control
-	Pointer  rune // the cursor row of a list
-	Folded   rune // a closed group
-	Unfolded rune // an open group
-	On, Off  rune // a toggle
-	Required rune // after a required field's label
+	Focus    rune     // beside the focused control
+	Pointer  rune     // the cursor row of a list
+	Folded   rune     // a closed group
+	Unfolded rune     // an open group
+	On, Off  rune     // a toggle
+	Required rune     // after a required field's label
+	Line     LineType // frames, rules and wires
 }
 
 var (
 	GlyphsUnicode = Glyphs{Focus: '▌', Pointer: '▸', Folded: '▸', Unfolded: '▾', On: '●', Off: '○', Required: '*'}
 	GlyphsCP437   = Glyphs{Focus: '▌', Pointer: '►', Folded: '►', Unfolded: '▼', On: '•', Off: '○', Required: '*'}
-	GlyphsASCII   = Glyphs{Focus: '>', Pointer: '>', Folded: '+', Unfolded: '-', On: '*', Off: '-', Required: '*'}
+	GlyphsASCII   = Glyphs{Focus: '>', Pointer: '>', Folded: '+', Unfolded: '-', On: '*', Off: '-', Required: '*', Line: LineASCII}
 )
 
 // DefaultTheme is a dark theme for true color and 256-color terminals

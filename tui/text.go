@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"unicode/utf8"
 )
 
@@ -118,13 +119,23 @@ func PadCenter(s string, width int) string {
 
 // --- Text wrapping ---
 
-// WrapText wraps text at word boundaries to fit width
-// Returns slice of lines, each no longer than width
+// WrapText wraps text to fit width: at each line break, at spaces, or, in a
+// word longer than a line, after its last '.', ',', ':', '/', '[' or ']'
+// that fits (a path or a key such as a[0].b); a word without one is cut.
+// Returns slice of lines, each no longer than width.
 func WrapText(s string, width int) []string {
 	if width <= 0 {
 		return nil
 	}
+	var lines []string
+	for line := range strings.SplitSeq(s, "\n") {
+		lines = append(lines, wrapLine(line, width)...)
+	}
+	return lines
+}
 
+// wrapLine wraps one line, s holding no line break
+func wrapLine(s string, width int) []string {
 	runes := []rune(s)
 	if len(runes) == 0 {
 		return []string{""}
@@ -132,7 +143,7 @@ func WrapText(s string, width int) []string {
 
 	var lines []string
 	lineStart := 0
-	lastSpace := -1
+	lastSpace, lastMark := -1, -1
 
 	for i := 0; i <= len(runes); i++ {
 		// Check if we need to wrap
@@ -147,9 +158,11 @@ func WrapText(s string, width int) []string {
 
 			// Need to wrap
 			wrapAt := i
-			if lastSpace > lineStart {
-				// Wrap at last space
+			switch {
+			case lastSpace > lineStart:
 				wrapAt = lastSpace
+			case lastMark > lineStart:
+				wrapAt = lastMark
 			}
 
 			lines = append(lines, string(runes[lineStart:wrapAt]))
@@ -160,12 +173,15 @@ func WrapText(s string, width int) []string {
 			} else {
 				lineStart = wrapAt
 			}
-			lastSpace = -1
+			lastSpace, lastMark = -1, -1
 		}
 
-		// Track spaces for word wrapping
+		// Track spaces for word wrapping, and the marks a long word breaks after
 		if i < len(runes) && runes[i] == ' ' {
 			lastSpace = i
+		}
+		if i < len(runes) && strings.ContainsRune(".,:/[]", runes[i]) {
+			lastMark = i + 1
 		}
 	}
 
@@ -189,4 +205,3 @@ func RepeatRune(r rune, n int) string {
 	}
 	return string(runes)
 }
-

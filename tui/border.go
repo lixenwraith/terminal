@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
@@ -14,25 +16,38 @@ const (
 	LineRounded                 // ╭─╮│╰╯
 	LineHeavy                   // ┏━┓┃┗┛
 	LineNone                    // spaces (invisible border with padding)
+	LineASCII                   // +-+|++, for a terminal outside UTF-8
+	LineDashed                  // ╭╌╮╎╰╯
 )
 
-// boxChars contains box drawing character sets indexed by LineType
-var boxChars = [...][6]rune{
-	LineSingle:  {'┌', '─', '┐', '│', '└', '┘'},
-	LineDouble:  {'╔', '═', '╗', '║', '╚', '╝'},
-	LineRounded: {'╭', '─', '╮', '│', '╰', '╯'},
-	LineHeavy:   {'┏', '━', '┓', '┃', '┗', '┛'},
-	LineNone:    {' ', ' ', ' ', ' ', ' ', ' '},
+// lineChars are each LineType's runes by the arms that meet in a cell: up 1,
+// right 2, down 4, left 8, so corners, tees and crossings all join
+var lineChars = [...]string{
+	LineSingle:  " │─└││┌├─┘─┴┐┤┬┼",
+	LineDouble:  " ║═╚║║╔╠═╝═╩╗╣╦╬",
+	LineRounded: " │─╰││╭├─╯─┴╮┤┬┼",
+	LineHeavy:   " ┃━┗┃┃┏┣━┛━┻┓┫┳╋",
+	LineNone:    "                ",
+	LineASCII:   " |-+||++-+-+++++",
+	LineDashed:  " ╎╌╰╎╎╭├╌╯╌┴╮┤┬┼",
 }
 
 const (
-	boxTL = 0 // top-left
-	boxH  = 1 // horizontal
-	boxTR = 2 // top-right
-	boxV  = 3 // vertical
-	boxBL = 4 // bottom-left
-	boxBR = 5 // bottom-right
+	boxTL = 6  // top-left
+	boxH  = 10 // horizontal
+	boxTR = 12 // top-right
+	boxV  = 5  // vertical
+	boxBL = 3  // bottom-left
+	boxBR = 9  // bottom-right
 )
+
+// runes returns the line's runes by arms; an unknown type draws single
+func (l LineType) runes() []rune {
+	if l >= LineType(len(lineChars)) {
+		l = LineSingle
+	}
+	return []rune(lineChars[l])
+}
 
 // --- Box Rendering ---
 
@@ -45,37 +60,35 @@ func (r Region) Box(line LineType, fg color.RGB) {
 // with off rows scrolled past its top edge. Rows outside the box are skipped,
 // so a partially visible box keeps its sides and grows no false edges.
 func (r Region) BoxClipped(line LineType, fg color.RGB, totalH, off int) {
+	r.boxStyled(line, Style{Fg: fg}, totalH, off)
+}
+
+// BoxStyle draws a border around the region's edge in a theme's style
+func (r Region) BoxStyle(line LineType, s Style) {
+	r.boxStyled(line, s, r.H, 0)
+}
+
+func (r Region) boxStyled(line LineType, s Style, totalH, off int) {
 	if r.W < 2 || r.H < 1 || totalH < 2 {
 		return
 	}
-	if line >= LineType(len(boxChars)) {
-		line = LineSingle
+	chars := line.runes()
+	edge := func(y int, left, right rune) {
+		r.TextStyled(0, y, string(left), s)
+		r.TextStyled(r.W-1, y, string(right), s)
 	}
-
-	chars := boxChars[line]
-	bg := color.RGB{} // Transparent (use existing bg)
-
 	for y := range r.H {
-		c := off + y
-		if c < 0 || c >= totalH {
-			continue
-		}
-		switch c {
-		case 0:
-			r.Cell(0, y, chars[boxTL], fg, bg, terminal.AttrNone)
-			r.Cell(r.W-1, y, chars[boxTR], fg, bg, terminal.AttrNone)
-			for x := 1; x < r.W-1; x++ {
-				r.Cell(x, y, chars[boxH], fg, bg, terminal.AttrNone)
+		switch c := off + y; {
+		case c < 0 || c >= totalH:
+		case c == 0 || c == totalH-1:
+			left, right := chars[boxTL], chars[boxTR]
+			if c > 0 {
+				left, right = chars[boxBL], chars[boxBR]
 			}
-		case totalH - 1:
-			r.Cell(0, y, chars[boxBL], fg, bg, terminal.AttrNone)
-			r.Cell(r.W-1, y, chars[boxBR], fg, bg, terminal.AttrNone)
-			for x := 1; x < r.W-1; x++ {
-				r.Cell(x, y, chars[boxH], fg, bg, terminal.AttrNone)
-			}
+			r.TextStyled(1, y, strings.Repeat(string(chars[boxH]), max(0, r.W-2)), s)
+			edge(y, left, right)
 		default:
-			r.Cell(0, y, chars[boxV], fg, bg, terminal.AttrNone)
-			r.Cell(r.W-1, y, chars[boxV], fg, bg, terminal.AttrNone)
+			edge(y, chars[boxV], chars[boxV])
 		}
 	}
 }
@@ -99,10 +112,7 @@ func (r Region) HLine(y int, line LineType, fg color.RGB) {
 	if y < 0 || y >= r.H {
 		return
 	}
-	if line >= LineType(len(boxChars)) {
-		line = LineSingle
-	}
-	ch := boxChars[line][boxH]
+	ch := line.runes()[boxH]
 	for x := 0; x < r.W; x++ {
 		r.Cell(x, y, ch, fg, color.RGB{}, terminal.AttrNone)
 	}
@@ -113,10 +123,7 @@ func (r Region) VLine(x int, line LineType, fg color.RGB) {
 	if x < 0 || x >= r.W {
 		return
 	}
-	if line >= LineType(len(boxChars)) {
-		line = LineSingle
-	}
-	ch := boxChars[line][boxV]
+	ch := line.runes()[boxV]
 	for y := 0; y < r.H; y++ {
 		r.Cell(x, y, ch, fg, color.RGB{}, terminal.AttrNone)
 	}
@@ -127,11 +134,7 @@ func (r Region) Divider(y int, label string, line LineType, fg color.RGB) {
 	if y < 0 || y >= r.H {
 		return
 	}
-	if line >= LineType(len(boxChars)) {
-		line = LineSingle
-	}
-
-	hChar := boxChars[line][boxH]
+	hChar := line.runes()[boxH]
 
 	// Fill with horizontal line
 	for x := 0; x < r.W; x++ {
@@ -170,4 +173,78 @@ func (r Region) Card(title string, line LineType, fg color.RGB) Region {
 	}
 
 	return r.Inset(1)
+}
+
+// --- Themed frames, rules and wires ---
+
+// Frame fills the region with the theme's text style and draws its border
+// in Glyphs.Line, the title on the top edge, and returns the inside with a
+// column of padding each side. Callers size it to its content, with Center.
+func (r Region) Frame(title string, th Theme) Region {
+	r.FillStyle(th.Text)
+	r.BoxStyle(th.Glyphs.Line, th.Border)
+	if title != "" && r.W > 6 {
+		r.TextStyled(2, 0, " "+Truncate(title, r.W-6)+" ", th.Accent)
+	}
+	return r.Sub(2, 1, r.W-4, r.H-2)
+}
+
+// Rule draws a line across row y, the title at its third column and the
+// hint muted at its end. The title keeps its room: the hint is dropped where
+// both do not fit.
+func (r Region) Rule(y int, title, hint string, th Theme) {
+	r.TextStyled(0, y, strings.Repeat(string(th.Glyphs.Line.runes()[boxH]), max(0, r.W)), th.Border)
+	if title != "" && r.W > 6 {
+		title = " " + Truncate(title, r.W-6) + " "
+		r.TextStyled(2, y, title, th.Text)
+	}
+	if hint != "" && RuneLen(title)+RuneLen(hint)+6 <= r.W {
+		r.TextStyled(r.W-RuneLen(hint)-3, y, " "+hint+" ", th.Muted)
+	}
+}
+
+// Wires are lines on a grid, each cell holding the arms that meet there: up
+// 1, right 2, down 4, left 8. Wherever lines branch or cross, the cell draws
+// the junction, whatever order they were laid in.
+type Wires struct {
+	W    int
+	Arms []uint8
+}
+
+// NewWires creates an empty grid w by h
+func NewWires(w, h int) Wires {
+	return Wires{W: w, Arms: make([]uint8, max(0, w*h))}
+}
+
+// H lays a wire along row y between columns x0 and x1
+func (g Wires) H(y, x0, x1 int) {
+	for x := min(x0, x1); x < max(x0, x1); x++ {
+		g.arm(x, y, 2)
+		g.arm(x+1, y, 8)
+	}
+}
+
+// V lays a wire down column x between rows y0 and y1
+func (g Wires) V(x, y0, y1 int) {
+	for y := min(y0, y1); y < max(y0, y1); y++ {
+		g.arm(x, y, 4)
+		g.arm(x, y+1, 1)
+	}
+}
+
+// arm adds an arm to a cell; one off the grid is dropped
+func (g Wires) arm(x, y int, a uint8) {
+	if i := y*g.W + x; x >= 0 && x < g.W && y >= 0 && i < len(g.Arms) {
+		g.Arms[i] |= a
+	}
+}
+
+// DrawWires draws every cell of the grid that has arms, in the line type
+func (r Region) DrawWires(g Wires, line LineType, s Style) {
+	chars := line.runes()
+	for i, arms := range g.Arms {
+		if arms != 0 {
+			r.TextStyled(i%g.W, i/g.W, string(chars[arms&15]), s)
+		}
+	}
 }

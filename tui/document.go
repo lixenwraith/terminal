@@ -203,11 +203,7 @@ func (r Region) docSection(y, x, w int, label string, opts DocOpts) {
 		r.TextStyled(x, y, label, opts.HeaderStyle)
 		return
 	}
-	line := opts.Rule
-	if line >= LineType(len(boxChars)) {
-		line = LineSingle
-	}
-	ch := boxChars[line][boxH]
+	ch := opts.Rule.runes()[boxH]
 	for i := range w {
 		r.Cell(x+i, y, ch, opts.RuleStyle.Fg, opts.RuleStyle.Bg, opts.RuleStyle.Attr)
 	}
