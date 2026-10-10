@@ -9,7 +9,7 @@ var (
 	// CSI sequences
 	csi      = []byte("\x1b[")
 	csiClear = []byte("\x1b[2J\x1b[H")
-	csiRIS   = []byte("\x1bc") // Reset to Initial GameState (emergency)
+	csiRIS   = []byte("\x1bc") // Reset to Initial State (emergency)
 	csiSGR0  = []byte("\x1b[0m")
 
 	// Cursor control
@@ -17,9 +17,10 @@ var (
 	csiCursorShow = []byte("\x1b[?25h")
 	csiCursorPos  = []byte("\x1b[") // followed by row;colH
 
-	// Screen modes
-	csiAltScreenEnter = []byte("\x1b[?1049h")
-	csiAltScreenExit  = []byte("\x1b[?1049l")
+	// Screen modes; the alternate screen also turns off the terminal's own bidi
+	// reordering (ECMA-48 BDSM, mode 8), so right-to-left text keeps its cells
+	csiAltScreenEnter = []byte("\x1b[?1049h\x1b[8l")
+	csiAltScreenExit  = []byte("\x1b[?1049l\x1b[8h")
 	// DECAWM: Auto-Wrap Mode
 	// ?7l disables wrapping (cursor sticks at right edge), preventing scroll when writing to bottom-right corner
 	csiAutoWrapOn  = []byte("\x1b[?7h")
@@ -67,7 +68,6 @@ func writeInt(w *bufio.Writer, n int) {
 		w.WriteByte(byte(n%10) + '0')
 		return
 	}
-	// Fallback for >999 (rare)
 	var buf [5]byte
 	i := 4
 	for n > 0 {

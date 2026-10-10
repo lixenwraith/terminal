@@ -37,8 +37,28 @@ func TestTransparentBackgroundKeepsItsKind(t *testing.T) {
 		if c := r.Cells[0]; c.Bg != panel.Bg || c.Attrs != terminal.AttrBold|panel.Attr&terminal.AttrBgColor {
 			t.Errorf("on %+v: %+v", panel, c)
 		}
-		if on := panel.On(Style{Attr: terminal.AttrReverse}); on.Bg != panel.Bg || on.Attr != panel.Attr|terminal.AttrReverse {
+		if on := panel.On(Style{Attr: terminal.AttrReverse}); on.Bg != panel.Bg || on.Attr != panel.Attr&terminal.AttrBgColor|terminal.AttrFgDefault|terminal.AttrReverse {
 			t.Errorf("%+v on reverse: %+v", panel, on)
+		}
+	}
+}
+
+// A reverse cursor row is one bar: its pointer, key, name, hint and blanks
+// take one style, whatever each draws in off the row, where they keep it
+func TestReverseCursorRowIsOneStyle(t *testing.T) {
+	s := NewOptionListState([]Option{{Name: "file", Hint: "rotating files", Key: 'f'}, {Name: "tcp", Key: 't'}})
+	s.Menu = true
+	for name, th := range map[string]Theme{"16 colors": Theme16, "mono": MonoTheme} {
+		r := canvas(40, 2, th)
+		r.OptionList(s, th)
+		for x, c := range r.Cells[:r.W] {
+			if first := r.Cells[0]; c.Fg != first.Fg || c.Bg != first.Bg || c.Attrs != first.Attrs {
+				t.Errorf("%s %q: column %d %+v, column 0 %+v", name, row(r, 0), x, c, first)
+				break
+			}
+		}
+		if c, a := r.Cells[r.W+2], th.Accent; c.Rune != 't' || c.Fg != a.Fg || c.Attrs&^terminal.AttrBgColor != a.Attr {
+			t.Errorf("%s %q: the key off the cursor row %+v, want %+v", name, row(r, 1), c, a)
 		}
 	}
 }

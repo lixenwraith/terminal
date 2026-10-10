@@ -5,15 +5,11 @@ import (
 	"unicode/utf8"
 )
 
-// --- Length calculation ---
-
-// RuneLen returns rune count, used as display width under the package-wide assumption of 1 cell per rune
-// Wide (CJK), emoji, and combining characters are not handled
+// RuneLen returns s's width in cells, a rune each: Flush draws every rune in
+// one column, a wide or joining one as U+FFFD
 func RuneLen(s string) int {
 	return utf8.RuneCountInString(s)
 }
-
-// --- Truncation ---
 
 // Truncate truncates string with … suffix if exceeds maxLen
 func Truncate(s string, maxLen int) string {
@@ -63,15 +59,11 @@ func TruncateMiddle(s string, maxLen int) string {
 		return Truncate(s, maxLen)
 	}
 
-	// Split remaining space between start and end
-	// Favor start slightly: (maxLen-1)/2 for start, rest for end
 	startLen := (maxLen - 1) / 2
 	endLen := maxLen - 1 - startLen
 
 	return string(runes[:startLen]) + "…" + string(runes[len(runes)-endLen:])
 }
-
-// --- Padding ---
 
 // PadRight pads string with spaces to width
 func PadRight(s string, width int) string {
@@ -117,8 +109,6 @@ func PadCenter(s string, width int) string {
 	return string(result)
 }
 
-// --- Text wrapping ---
-
 // WrapText wraps text to fit width: at each line break, at spaces, or, in a
 // word longer than a line, after its last '.', ',', ':', '/', '[' or ']'
 // that fits (a path or a key such as a[0].b); a word without one is cut.
@@ -146,17 +136,14 @@ func wrapLine(s string, width int) []string {
 	lastSpace, lastMark := -1, -1
 
 	for i := 0; i <= len(runes); i++ {
-		// Check if we need to wrap
 		if i-lineStart >= width || i == len(runes) {
 			if i == len(runes) {
-				// End of string
 				if lineStart < len(runes) {
 					lines = append(lines, string(runes[lineStart:]))
 				}
 				break
 			}
 
-			// Need to wrap
 			wrapAt := i
 			switch {
 			case lastSpace > lineStart:
@@ -167,7 +154,6 @@ func wrapLine(s string, width int) []string {
 
 			lines = append(lines, string(runes[lineStart:wrapAt]))
 
-			// Skip space at wrap point
 			if wrapAt < len(runes) && runes[wrapAt] == ' ' {
 				lineStart = wrapAt + 1
 			} else {
@@ -191,8 +177,6 @@ func wrapLine(s string, width int) []string {
 
 	return lines
 }
-
-// --- Repetition ---
 
 // RepeatRune returns a string of n repeated runes, for string repeat use strings.Repeat
 func RepeatRune(r rune, n int) string {
