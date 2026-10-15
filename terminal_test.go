@@ -228,6 +228,85 @@ func TestSessionLeavesTheTerminalAsItFoundIt(t *testing.T) {
 	}
 }
 
+// A mouse mode change writes the modes dropped as reset and the modes added
+// as set, and sets the highest mode kept again, last, when another was dropped
+// or added under it; SGR is on while any mode is. Whether the terminal keeps
+// one mode (xterm, xterm.js, kitty), lets a set clear the others (alacritty)
+// or keeps each and reports by the highest (VTE, WezTerm, Windows Terminal),
+// it then reports by the highest mode asked for.
+func TestMouseModeChangesKeepReporting(t *testing.T) {
+	c, d, m := MouseModeClick, MouseModeDrag, MouseModeMotion
+	for _, tc := range []struct {
+		from, to MouseMode
+		want     string // +n sets mode n, -n resets it
+	}{
+		{0, 0, ""}, {0, c, "+1006 +1000"}, {0, d, "+1006 +1002"}, {0, c | d, "+1006 +1000 +1002"},
+		{0, m, "+1006 +1003"}, {0, c | m, "+1006 +1000 +1003"}, {0, d | m, "+1006 +1002 +1003"}, {0, c | d | m, "+1006 +1000 +1002 +1003"},
+		{c, 0, "-1000 -1006"}, {c, c, ""}, {c, d, "-1000 +1002"}, {c, c | d, "+1002"},
+		{c, m, "-1000 +1003"}, {c, c | m, "+1003"}, {c, d | m, "-1000 +1002 +1003"}, {c, c | d | m, "+1002 +1003"},
+		{d, 0, "-1002 -1006"}, {d, c, "-1002 +1000"}, {d, d, ""}, {d, c | d, "+1000 +1002"},
+		{d, m, "-1002 +1003"}, {d, c | m, "-1002 +1000 +1003"}, {d, d | m, "+1003"}, {d, c | d | m, "+1000 +1003"},
+		{c | d, 0, "-1002 -1000 -1006"}, {c | d, c, "-1002 +1000"}, {c | d, d, "-1000 +1002"}, {c | d, c | d, ""},
+		{c | d, m, "-1002 -1000 +1003"}, {c | d, c | m, "-1002 +1003"}, {c | d, d | m, "-1000 +1003"}, {c | d, c | d | m, "+1003"},
+		{m, 0, "-1003 -1006"}, {m, c, "-1003 +1000"}, {m, d, "-1003 +1002"}, {m, c | d, "-1003 +1000 +1002"},
+		{m, m, ""}, {m, c | m, "+1000 +1003"}, {m, d | m, "+1002 +1003"}, {m, c | d | m, "+1000 +1002 +1003"},
+		{c | m, 0, "-1003 -1000 -1006"}, {c | m, c, "-1003 +1000"}, {c | m, d, "-1003 -1000 +1002"}, {c | m, c | d, "-1003 +1002"},
+		{c | m, m, "-1000 +1003"}, {c | m, c | m, ""}, {c | m, d | m, "-1000 +1002 +1003"}, {c | m, c | d | m, "+1002 +1003"},
+		{d | m, 0, "-1003 -1002 -1006"}, {d | m, c, "-1003 -1002 +1000"}, {d | m, d, "-1003 +1002"}, {d | m, c | d, "-1003 +1000 +1002"},
+		{d | m, m, "-1002 +1003"}, {d | m, c | m, "-1002 +1000 +1003"}, {d | m, d | m, ""}, {d | m, c | d | m, "+1000 +1003"},
+		{c | d | m, 0, "-1003 -1002 -1000 -1006"}, {c | d | m, c, "-1003 -1002 +1000"}, {c | d | m, d, "-1003 -1000 +1002"}, {c | d | m, c | d, "-1003 +1002"},
+		{c | d | m, m, "-1002 -1000 +1003"}, {c | d | m, c | m, "-1002 +1003"}, {c | d | m, d | m, "-1000 +1003"}, {c | d | m, c | d | m, ""},
+	} {
+		term := newTerm(&fakeBackend{}, ColorMode256)
+		term.initialized = true // no writer runs, so what is sent stays queued
+		term.SetMouseMode(tc.from)
+		before := string(term.queued)
+		term.queued = nil
+		term.SetMouseMode(tc.to)
+		got := string(term.queued)
+
+		var want strings.Builder
+		for _, f := range strings.Fields(tc.want) {
+			want.WriteString("\x1b[?" + f[1:] + map[byte]string{'+': "h", '-': "l"}[f[0]])
+		}
+		if got != want.String() {
+			t.Errorf("%03b to %03b: %q, want %q", tc.from, tc.to, got, want.String())
+		}
+		one, alacritty, each, sgr := reportedMouseMode(before + got)
+		if top := highestMouseMode(tc.to); one != top || alacritty != top || each != top || sgr != (tc.to != 0) {
+			t.Errorf("%03b to %03b reports by %03b, %03b, %03b, SGR %t; want %03b", tc.from, tc.to, one, alacritty, each, sgr, top)
+		}
+	}
+}
+
+// reportedMouseMode replays mode sets and resets as each kind of terminal
+// keeps them and returns the mode each then reports by: xterm, xterm.js and
+// kitty keep the last mode set, which a reset of any turns off; alacritty's set
+// clears the others and its reset only its own; VTE, WezTerm and Windows
+// Terminal keep each, reporting by the highest
+func reportedMouseMode(out string) (one, alacritty, each MouseMode, sgr bool) {
+	modes := map[string]MouseMode{"1000": MouseModeClick, "1002": MouseModeDrag, "1003": MouseModeMotion}
+	for _, s := range strings.Split(out, "\x1b[?")[1:] {
+		code, set := s[:len(s)-1], strings.HasSuffix(s, "h")
+		switch m := modes[code]; {
+		case code == "1006":
+			sgr = set
+		case set:
+			one, alacritty, each = m, m, each|m
+		default:
+			one, alacritty, each = 0, alacritty&^m, each&^m
+		}
+	}
+	return one, alacritty, highestMouseMode(each), sgr
+}
+
+func highestMouseMode(m MouseMode) MouseMode {
+	for m&(m-1) != 0 {
+		m &= m - 1
+	}
+	return m
+}
+
 // A terminal that stops reading holds the write in flight, not whoever draws:
 // Flush returns while it is out, Blocked says how long it has waited, the newest
 // frame held meanwhile is the one drawn once the terminal reads again, and a
