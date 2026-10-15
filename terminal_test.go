@@ -18,6 +18,7 @@ type fakeBackend struct {
 	out    bytes.Buffer
 	chunks []string
 	pause  time.Duration
+	gate   chan struct{} // when set, a write waits until it is closed
 }
 
 func (f *fakeBackend) Init() error                              { return nil }
@@ -26,6 +27,9 @@ func (f *fakeBackend) Size() (int, int)                         { return 1, 1 }
 func (f *fakeBackend) SetResizeHandler(func(width, height int)) {}
 
 func (f *fakeBackend) Write(p []byte) error {
+	if f.gate != nil {
+		<-f.gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.out.Write(p)
@@ -80,10 +84,9 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 		{ColorModeTrueColor, []Cell{{Rune: 'x', Fg: color.RGB{R: 1, G: 2, B: 3}, Attrs: AttrBgDefault}}, "\x1b[0;38;2;1;2;3;49mx"},
 		{ColorModeNone, []Cell{{Rune: 'x', Fg: red, Bg: yellow, Attrs: AttrFg256 | AttrUnderline}, {Rune: 'y', Fg: yellow, Attrs: AttrUnderline}}, "\x1b[0;4mxy"},
 	} {
-		f := &fakeBackend{}
-		o := newOutputBuffer(f, c.mode)
+		o := newOutputBuffer(c.mode)
 		o.flush(c.cells, len(c.cells), 1)
-		if got, want := f.written(), "\x1b[1;1H"+c.want+"\x1b[0m"; got != want {
+		if got, want := o.buf.String(), "\x1b[1;1H"+c.want+"\x1b[0m"; got != want {
 			t.Errorf("mode %d %+v: %q, want %q", c.mode, c.cells, got, want)
 		}
 	}
@@ -94,10 +97,9 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 // value or a log line carried in, or no rune at all, is drawn as a space,
 // never sent to the terminal
 func TestCellsSendNoControlCharacters(t *testing.T) {
-	f := &fakeBackend{}
-	o := newOutputBuffer(f, ColorMode256)
+	o := newOutputBuffer(ColorMode256)
 	o.flush([]Cell{{Rune: 0x1b}, {Rune: 0x9b}, {Rune: 0x7f}, {Rune: -229}, {Rune: 0xd800}, {Rune: 0x202e}, {Rune: 0x2067}, {Rune: 0x061c}, {Rune: 0x200b}, {Rune: 0x2028}, {Rune: 'é'}}, 11, 1)
-	if got, want := f.written(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m          é\x1b[0m"; got != want {
+	if got, want := o.buf.String(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m          é\x1b[0m"; got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }
@@ -107,14 +109,13 @@ func TestCellsSendNoControlCharacters(t *testing.T) {
 // (a spacing mark, a letter such as Thai's sara am) is drawn as U+FFFD, any
 // other as itself
 func TestEachCellIsOneColumn(t *testing.T) {
-	f := &fakeBackend{}
-	o := newOutputBuffer(f, ColorMode256)
+	o := newOutputBuffer(ColorMode256)
 	var row []Cell
 	for _, r := range "\u0301\u20dd\u1161漢Ａ😀✅\U0001f1fa\u093e\u0e33é─❤" {
 		row = append(row, Cell{Rune: r})
 	}
 	o.flush(row, len(row), 1)
-	if got, want := f.written(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m"+strings.Repeat("\ufffd", 10)+"é─❤\x1b[0m"; got != want {
+	if got, want := o.buf.String(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m"+strings.Repeat("\ufffd", 10)+"é─❤\x1b[0m"; got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }
@@ -183,8 +184,7 @@ func expectEvents(t *testing.T, cases map[string]input) {
 // Paste mode set on the terminal is what its reader parses by
 func TestPasteModeReachesTheReader(t *testing.T) {
 	f := &fakeBackend{}
-	term := &termImpl{backend: f, syntheticCh: make(chan Event, 1), resizeCh: make(chan ResizeEvent, 1)}
-	term.output = newOutputBuffer(f, ColorMode256)
+	term := newTerm(f, ColorMode256)
 	if err := term.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -210,8 +210,7 @@ func TestPasteModeReachesTheReader(t *testing.T) {
 // than painting it black
 func TestSessionLeavesTheTerminalAsItFoundIt(t *testing.T) {
 	f := &fakeBackend{}
-	term := &termImpl{backend: f, syntheticCh: make(chan Event, 1), resizeCh: make(chan ResizeEvent, 1)}
-	term.output = newOutputBuffer(f, ColorModeTrueColor)
+	term := newTerm(f, ColorModeTrueColor)
 	if err := term.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -226,5 +225,75 @@ func TestSessionLeavesTheTerminalAsItFoundIt(t *testing.T) {
 	}
 	if i := strings.Index(got, "\x1b[8l"); i < 0 || !strings.Contains(got[i:], "\x1b[8h") {
 		t.Fatalf("bidi reordering not off for the session: %q", got)
+	}
+}
+
+// A terminal that stops reading holds the write in flight, not whoever draws:
+// Flush returns while it is out, Blocked says how long it has waited, the newest
+// frame held meanwhile is the one drawn once the terminal reads again, and a
+// control sequence asked for after a held frame reaches the terminal after it
+func TestAStoppedTerminalHoldsNoCaller(t *testing.T) {
+	f := &fakeBackend{gate: make(chan struct{})}
+	term := newTerm(f, ColorMode256)
+	if err := term.Init(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the first write to go out", func() bool { return term.Blocked() > 0 })
+
+	frame := func(r rune) []Cell { return []Cell{{Rune: r}} }
+	returned := make(chan struct{})
+	go func() {
+		term.Flush(frame('a'), 1, 1)
+		term.Flush(frame('b'), 1, 1)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Flush waited on a terminal that stopped reading")
+	}
+	time.Sleep(10 * time.Millisecond)
+	if b := term.Blocked(); b < 10*time.Millisecond {
+		t.Fatalf("blocked %v while the write is held", b)
+	}
+	term.SetCursorVisible(true)
+
+	close(f.gate)
+	waitFor(t, "output to drain", func() bool { return term.Blocked() == 0 && strings.Contains(f.written(), "\x1b[?25h") })
+	got := f.written()
+	if strings.Contains(got, "a") || !strings.Contains(got, "b") {
+		t.Fatalf("drew %q; want the newest held frame only", got)
+	}
+	if strings.Index(got, "b") > strings.Index(got, "\x1b[?25h") {
+		t.Fatalf("the cursor was shown before the frame held ahead of it: %q", got)
+	}
+	term.Fini()
+}
+
+// Fini restores the termios even when the terminal never reads its last
+// sequences: it stops waiting after finiDrainTimeout
+func TestFiniLeavesAStoppedTerminal(t *testing.T) {
+	f := &fakeBackend{gate: make(chan struct{})}
+	defer close(f.gate)
+	term := newTerm(f, ColorMode256)
+	if err := term.Init(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { term.Fini(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(finiDrainTimeout + 2*time.Second):
+		t.Fatal("Fini waited on a terminal that stopped reading")
+	}
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); !ok(); {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
