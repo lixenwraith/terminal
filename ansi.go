@@ -1,7 +1,7 @@
 package terminal
 
 import (
-	"bufio"
+	"bytes"
 )
 
 // Pre-allocated ANSI sequence fragments (avoid allocations during render)
@@ -49,7 +49,7 @@ var (
 
 // writeInt writes an integer without allocation
 // Optimized for terminal values (0-255 common, 0-999 typical max)
-func writeInt(w *bufio.Writer, n int) {
+func writeInt(w *bytes.Buffer, n int) {
 	if n < 0 {
 		n = 0
 	}
@@ -79,7 +79,7 @@ func writeInt(w *bufio.Writer, n int) {
 }
 
 // writeCursorPos writes cursor positioning sequence (0-indexed input)
-func writeCursorPos(w *bufio.Writer, x, y int) {
+func writeCursorPos(w *bytes.Buffer, x, y int) {
 	w.Write(csiCursorPos)
 	writeInt(w, y+1)
 	w.WriteByte(';')
@@ -88,7 +88,7 @@ func writeCursorPos(w *bufio.Writer, x, y int) {
 }
 
 // writeCursorForward writes cursor forward N positions
-func writeCursorForward(w *bufio.Writer, n int) {
+func writeCursorForward(w *bytes.Buffer, n int) {
 	if n <= 0 {
 		return
 	}

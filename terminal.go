@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/lixenwraith/color"
 	"golang.org/x/term"
@@ -61,9 +62,15 @@ type Terminal interface {
 	// ColorMode returns detected color capability
 	ColorMode() ColorMode
 
-	// Flush writes cell buffer to terminal
-	// Cells are row-major: cells[y*width + x]
+	// Flush hands a frame to the terminal; cells are row-major: cells[y*width + x].
+	// It never waits on the terminal: while the last write is still out, the frame
+	// is held and drawn once that write returns, a newer one replacing it
 	Flush(cells []Cell, width, height int)
+
+	// Blocked reports how long the terminal has held the write in flight, zero
+	// while output drains. A terminal that stops reading (a hidden tab, a client
+	// that went away, flow control) shows here instead of as a caller that waits
+	Blocked() time.Duration
 
 	// Clear fills screen with specified background color
 	Clear(bg color.RGB)
@@ -114,7 +121,27 @@ type termImpl struct {
 	finalized   bool
 	mouseMode   MouseMode
 	paste       bool
+
+	// Output reaches the terminal on writeLoop's goroutine, so a terminal that
+	// stops reading holds that goroutine rather than whoever draws. queued is what
+	// was rendered and not yet taken; a frame Flush is handed while a write is out
+	// waits in held, newest first, until it returns. Both are guarded by mu.
+	queued     []byte
+	writing    []byte // owned by writeLoop
+	held       []Cell
+	heldW      int
+	heldH      int
+	holding    bool
+	writeSince atomic.Int64 // unix nanoseconds the write out began; zero when none is
+	wake       chan struct{}
+	quit       chan struct{}
+	writerDone chan struct{}
 }
+
+// finiDrainTimeout bounds how long Fini waits for the terminal to take what is
+// queued, the restoring sequences last: a terminal that stopped reading would
+// otherwise hold the process at exit
+const finiDrainTimeout = 2 * time.Second
 
 // New creates a new Terminal instance. Without a mode it uses
 // DetectColorMode's, or ColorModeNone when NO_COLOR is set; an explicit mode
@@ -129,15 +156,19 @@ func New(colorMode ...ColorMode) Terminal {
 		c = ColorModeNone
 	}
 
-	t := &termImpl{
+	return newTerm(b, c)
+}
+
+func newTerm(b Backend, c ColorMode) *termImpl {
+	return &termImpl{
 		backend:     b,
+		output:      newOutputBuffer(c),
 		syntheticCh: make(chan Event, 16),
 		resizeCh:    make(chan ResizeEvent, 1),
+		wake:        make(chan struct{}, 1),
+		quit:        make(chan struct{}),
+		writerDone:  make(chan struct{}),
 	}
-
-	// Initialize output buffer with backend
-	t.output = newOutputBuffer(b, c)
-	return t
 }
 
 // Init enters raw mode and sets up terminal
@@ -178,13 +209,16 @@ func (t *termImpl) Init() error {
 		}
 	})
 
+	go t.writeLoop()
+
 	// Enter alternate screen, hide cursor
-	t.writeRaw(csiAltScreenEnter)
-	t.writeRaw(csiCursorHide)
+	out := &t.output.buf
+	out.Write(csiAltScreenEnter)
+	out.Write(csiCursorHide)
 
 	// DISABLE AUTO-WRAP
 	// Prevents terminal scroll/wrap on bottom-right corner write
-	t.writeRaw(csiAutoWrapOff)
+	out.Write(csiAutoWrapOff)
 
 	// Invisible cursor
 	t.cursorVisible.Store(false)
@@ -196,6 +230,7 @@ func (t *termImpl) Init() error {
 
 	// Clear screen
 	t.output.clear(color.RGB{}, AttrBgDefault)
+	t.sendLocked()
 
 	// Start input reader
 	t.input.start()
@@ -207,24 +242,25 @@ func (t *termImpl) Init() error {
 // Fini restores terminal state
 func (t *termImpl) Fini() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	if !t.initialized || t.finalized {
+		t.mu.Unlock()
 		return
 	}
+	t.finalized = true
+	t.holding = false // a frame not yet drawn is not drawn over the restored screen
+	w := &t.output.buf
 
 	// Disable mouse before other cleanup
 	if t.mouseMode != MouseModeNone {
-		w := t.output.writer
 		w.Write(csiMouseMotionOff)
 		w.Write(csiMouseDragOff)
 		w.Write(csiMouseClickOff)
 		w.Write(csiMouseSGROff)
-		w.Flush()
+		t.sendLocked()
 	}
 
 	if t.paste {
-		t.writeRaw(csiPasteOff)
+		w.Write(csiPasteOff)
 	}
 
 	// Stop handlers
@@ -233,21 +269,29 @@ func (t *termImpl) Fini() {
 	}
 
 	// Show cursor
-	t.writeRaw(csiCursorShow)
+	w.Write(csiCursorShow)
 
 	// Exit alternate screen
-	t.writeRaw(csiAltScreenExit)
+	w.Write(csiAltScreenExit)
 
 	// Re-enable Auto-Wrap AFTER exiting alt screen to ensure the main buffer has wrap enabled
-	t.writeRaw(csiAutoWrapOn)
+	w.Write(csiAutoWrapOn)
 
 	// Reset attributes
-	t.writeRaw(csiSGR0)
+	w.Write(csiSGR0)
+	t.sendLocked()
+	t.mu.Unlock()
+
+	// The restoring sequences leave before raw mode does, unless the terminal has
+	// stopped reading: then the termios is restored without them
+	close(t.quit)
+	select {
+	case <-t.writerDone:
+	case <-time.After(finiDrainTimeout):
+	}
 
 	// Backend cleanup
 	t.backend.Fini()
-
-	t.finalized = true
 }
 
 // Size returns current terminal dimensions
@@ -265,8 +309,8 @@ func (t *termImpl) ColorMode() ColorMode {
 	return t.output.colorMode
 }
 
-// Flush writes cell buffer to terminal
-// Holds lock for entire operation to prevent race with Clear/MoveCursor
+// Flush renders cells and queues them for the terminal, or holds them while a write
+// is out. Holds lock for entire operation to prevent race with Clear/MoveCursor
 func (t *termImpl) Flush(cells []Cell, width, height int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -275,6 +319,18 @@ func (t *termImpl) Flush(cells []Cell, width, height int) {
 		return
 	}
 
+	if t.writeSince.Load() != 0 {
+		t.held = append(t.held[:0], cells[:min(len(cells), width*height)]...)
+		t.heldW, t.heldH, t.holding = width, height, true
+		return
+	}
+	// A frame is a whole screen, so one rendered now supersedes any held
+	t.holding = false
+	t.renderLocked(cells, width, height)
+}
+
+// renderLocked diffs one frame into the queue. Caller MUST hold mu.
+func (t *termImpl) renderLocked(cells []Cell, width, height int) {
 	// Validation against backend size; if mismatch, drop frame to prevent resize race corruption
 	currW, currH := t.backend.Size()
 	if currW != width || currH != height {
@@ -282,6 +338,24 @@ func (t *termImpl) Flush(cells []Cell, width, height int) {
 	}
 
 	t.output.flush(cells, width, height)
+	t.sendLocked()
+}
+
+// releaseLocked renders a held frame ahead of a control sequence, so the terminal
+// receives the two in the order they were asked for. Caller MUST hold mu.
+func (t *termImpl) releaseLocked() {
+	if t.holding {
+		t.holding = false
+		t.renderLocked(t.held, t.heldW, t.heldH)
+	}
+}
+
+// Blocked reports how long the write in flight has waited on the terminal
+func (t *termImpl) Blocked() time.Duration {
+	if since := t.writeSince.Load(); since != 0 {
+		return time.Since(time.Unix(0, since))
+	}
+	return 0
 }
 
 // Clear fills screen with background color
@@ -293,7 +367,9 @@ func (t *termImpl) Clear(bg color.RGB) {
 		return
 	}
 
+	t.releaseLocked()
 	t.output.clear(bg, 0)
+	t.sendLocked()
 }
 
 // SetCursorVisible shows/hides cursor
@@ -309,13 +385,14 @@ func (t *termImpl) SetCursorVisible(visible bool) {
 		return
 	}
 
-	w := t.output.writer
+	t.releaseLocked()
+	w := &t.output.buf
 	if visible {
 		w.Write(csiCursorShow)
 	} else {
 		w.Write(csiCursorHide)
 	}
-	w.Flush()
+	t.sendLocked()
 }
 
 // MoveCursor positions cursor (0-indexed)
@@ -327,6 +404,7 @@ func (t *termImpl) MoveCursor(x, y int) {
 		return
 	}
 
+	t.releaseLocked()
 	if t.output != nil {
 		t.output.invalidateCursor()
 	}
@@ -345,10 +423,9 @@ func (t *termImpl) MoveCursor(x, y int) {
 		y = h - 1
 	}
 
-	// Write through buffered writer to maintain stream order
-	wBuf := t.output.writer
-	writeCursorPos(wBuf, x, y)
-	wBuf.Flush()
+	// Through the queue, to keep the stream's order
+	writeCursorPos(&t.output.buf, x, y)
+	t.sendLocked()
 }
 
 // Sync forces full redraw
@@ -362,8 +439,10 @@ func (t *termImpl) Sync() {
 
 	// Clear terminal before full redraw
 	// Diff-based rendering assumes physical terminal matches front buffer state
+	t.releaseLocked()
 	t.output.clear(color.RGB{}, AttrBgDefault)
 	t.output.forceFullRedraw()
+	t.sendLocked()
 }
 
 // PollEvent blocks until next input event
@@ -412,7 +491,8 @@ func (t *termImpl) SetMouseMode(mode MouseMode) error {
 	oldMode := t.mouseMode
 	t.mouseMode = mode
 
-	w := t.output.writer
+	t.releaseLocked()
+	w := &t.output.buf
 
 	// Disable modes no longer needed (reverse order of enable)
 	if oldMode&MouseModeMotion != 0 && mode&MouseModeMotion == 0 {
@@ -446,7 +526,7 @@ func (t *termImpl) SetMouseMode(mode MouseMode) error {
 		w.Write(csiMouseMotionOn)
 	}
 
-	w.Flush()
+	t.sendLocked()
 	return nil
 }
 
@@ -460,18 +540,15 @@ func (t *termImpl) SetPasteMode(on bool) error {
 	}
 	t.paste = on
 	t.input.pasteMode.Store(on)
-	w := t.output.writer
+	t.releaseLocked()
+	w := &t.output.buf
 	if on {
 		w.Write(csiPasteOn)
 	} else {
 		w.Write(csiPasteOff)
 	}
-	return w.Flush()
-}
-
-// writeRaw writes raw bytes to output
-func (t *termImpl) writeRaw(data []byte) {
-	t.backend.Write(data)
+	t.sendLocked()
+	return nil
 }
 
 // EmergencyReset attempts to restore terminal to sane state

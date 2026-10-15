@@ -1,20 +1,22 @@
 package terminal
 
 import (
-	"bufio"
+	"bytes"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/lixenwraith/color"
 )
 
-// outputBuffer manages double-buffered terminal output with diffing
+// outputBuffer renders double-buffered terminal output with diffing. It only
+// encodes: what an operation renders collects in buf, and termImpl hands it to
+// the goroutine that writes it.
 type outputBuffer struct {
 	front     []Cell
 	width     int
 	height    int
 	colorMode ColorMode
-	writer    *bufio.Writer
+	buf       bytes.Buffer
 
 	cursorX     int
 	cursorY     int
@@ -27,7 +29,7 @@ type outputBuffer struct {
 	lastValid bool
 }
 
-// writerAdapter adapts Backend to io.Writer for bufio
+// writerAdapter adapts Backend to io.Writer
 type writerAdapter struct {
 	b Backend
 }
@@ -40,13 +42,8 @@ func (wa writerAdapter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func newOutputBuffer(backend Backend, colorMode ColorMode) *outputBuffer {
-	// Use 128KB buffer for minimal calls to backend
-	adapter := writerAdapter{b: backend}
-	return &outputBuffer{
-		writer:    bufio.NewWriterSize(adapter, 131072),
-		colorMode: colorMode,
-	}
+func newOutputBuffer(colorMode ColorMode) *outputBuffer {
+	return &outputBuffer{colorMode: colorMode}
 }
 
 func (o *outputBuffer) resize(width, height int) {
@@ -74,7 +71,7 @@ func cellEqual(a, b Cell) bool {
 		a.Attrs == b.Attrs
 }
 
-// flush writes the back buffer to terminal, diffing against front buffer
+// flush renders the back buffer into buf, diffing against front buffer
 func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	if width != o.width || height != o.height {
 		o.resize(width, height)
@@ -85,7 +82,7 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 		return
 	}
 
-	w := o.writer
+	w := &o.buf
 
 	for y := 0; y < height; y++ {
 		rowStart := y * width
@@ -178,7 +175,6 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 
 	w.Write(csiSGR0)
 	o.lastValid = false
-	w.Flush()
 }
 
 // oneColumn is r as a cell draws it: one glyph in one column, where the
@@ -292,7 +288,7 @@ func digitCount(n int) int {
 }
 
 // moveCursorTo positions cursor using most efficient method
-func (o *outputBuffer) moveCursorTo(w *bufio.Writer, x, y int) {
+func (o *outputBuffer) moveCursorTo(w *bytes.Buffer, x, y int) {
 	if o.cursorValid && o.cursorX == x && o.cursorY == y {
 		return
 	}
@@ -319,7 +315,7 @@ func (o *outputBuffer) moveCursorTo(w *bufio.Writer, x, y int) {
 }
 
 // writeStyleCoalesced emits a single combined SGR sequence when style changes
-func (o *outputBuffer) writeStyleCoalesced(w *bufio.Writer, fg, bg color.RGB, attr Attr) {
+func (o *outputBuffer) writeStyleCoalesced(w *bytes.Buffer, fg, bg color.RGB, attr Attr) {
 	if o.colorMode == ColorModeNone {
 		fg, bg, attr = color.RGB{}, color.RGB{}, attr&AttrStyle
 	}
@@ -372,7 +368,7 @@ var attrCodes = [...]struct {
 // writeColor writes one color's SGR parameters, after a ';' when sep, for
 // base 30 (foreground) or 40 (background): the terminal's own, a palette
 // index, or RGB, as the color mode allows. ColorModeNone writes nothing.
-func (o *outputBuffer) writeColor(w *bufio.Writer, c color.RGB, palette, deflt bool, base int, sep bool) {
+func (o *outputBuffer) writeColor(w *bytes.Buffer, c color.RGB, palette, deflt bool, base int, sep bool) {
 	if o.colorMode == ColorModeNone {
 		return
 	}
@@ -418,10 +414,10 @@ func (o *outputBuffer) forceFullRedraw() {
 	o.cursorValid = false
 }
 
-// clear writes a clear screen with specified background, attr's
+// clear renders a clear screen with specified background, attr's
 // AttrBgDefault or AttrBg256 saying how to read it
 func (o *outputBuffer) clear(bg color.RGB, attr Attr) {
-	w := o.writer
+	w := &o.buf
 	w.Write(csiSGR0)
 	w.Write(csi)
 	o.writeColor(w, bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, false)
@@ -430,7 +426,6 @@ func (o *outputBuffer) clear(bg color.RGB, attr Attr) {
 
 	o.lastValid = false
 	o.cursorValid = false
-	w.Flush()
 
 	for i := range o.front {
 		o.front[i] = Cell{Rune: ' ', Bg: bg, Attrs: attr & AttrBgColor}

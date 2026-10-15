@@ -24,7 +24,8 @@ consoles with VT processing, and browsers via xterm.js (WASM builds).
 
     Terminal (interface)
       └── termImpl
-            ├── outputBuffer   diffing, ANSI generation, 128KB buffered writer
+            ├── outputBuffer   diffing, ANSI generation
+            ├── writeLoop      the one goroutine that writes output
             ├── inputReader    escape sequence parser, event channel
             └── Backend (interface)
                   ├── unixBackend     //go:build unix — termios, unix.Poll, SIGWINCH, /dev/tty
@@ -54,6 +55,15 @@ passes it to `Flush`. The output buffer diffs against the previously flushed fra
 
 `Sync()` clears the screen and invalidates the front buffer, forcing a full
 redraw — required after any external process writes to the terminal.
+
+Output is written on a goroutine of its own, so no call waits on the terminal.
+A terminal that stops reading (a hidden tab, a multiplexer client that went
+away, flow control) holds that goroutine in its write; meanwhile `Flush` keeps
+only the newest frame, drawn once the write returns, and control sequences
+(cursor, mouse, paste, `Clear`, `Sync`) queue behind it in call order.
+`Blocked()` reports how long the write in flight has waited, so a caller can
+stop composing frames nobody will see. `Fini` waits up to two seconds for the
+restoring sequences, then restores the termios without them.
 
 Auto-wrap and, where the terminal follows ECMA-48 mode 8 (VTE), its own bidi
 reordering are off during the session: the bottom-right cell is writable

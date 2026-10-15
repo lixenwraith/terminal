@@ -39,8 +39,11 @@
 //
 // # Performance
 //
-// Output uses 128KB buffered writer with cell-level diffing. Only changed cells
-// generate ANSI sequences. Style attributes are coalesced to minimize SGR calls.
+// Output uses cell-level diffing. Only changed cells generate ANSI sequences.
+// Style attributes are coalesced to minimize SGR calls. One goroutine writes
+// what is rendered, so a terminal that stops reading never holds the caller:
+// Flush keeps the newest frame until the write in flight returns, and Blocked
+// reports how long it has waited.
 // Input parsing is zero-allocation for common cases.
 //
 // This package bypasses terminfo/termcap entirely, emitting direct ANSI sequences.
