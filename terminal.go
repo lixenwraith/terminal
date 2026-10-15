@@ -494,7 +494,8 @@ func (t *termImpl) SetMouseMode(mode MouseMode) error {
 	t.releaseLocked()
 	w := &t.output.buf
 
-	// Disable modes no longer needed (reverse order of enable)
+	// Disable modes no longer needed (reverse order of enable): VTE 0.54+,
+	// WezTerm and Windows Terminal keep each one set and report by the highest
 	if oldMode&MouseModeMotion != 0 && mode&MouseModeMotion == 0 {
 		w.Write(csiMouseMotionOff)
 	}
@@ -515,14 +516,30 @@ func (t *termImpl) SetMouseMode(mode MouseMode) error {
 		w.Write(csiMouseSGROn)
 	}
 
-	// Enable new modes (click is base, drag extends, motion extends further)
-	if mode&MouseModeClick != 0 && oldMode&MouseModeClick == 0 {
+	// xterm, xterm.js, kitty, tmux and Konsole keep one mode, which setting
+	// another replaces and resetting any turns off, and alacritty's and urxvt's
+	// set clears the others: on any change the highest mode wanted is written
+	// last, even when already on
+	var top MouseMode
+	switch {
+	case mode == oldMode:
+	case mode&MouseModeMotion != 0:
+		top = MouseModeMotion
+	case mode&MouseModeDrag != 0:
+		top = MouseModeDrag
+	case mode&MouseModeClick != 0:
+		top = MouseModeClick
+	}
+
+	// Enable new modes, and the highest again (click is base, drag extends,
+	// motion extends further)
+	if mode&MouseModeClick != 0 && (oldMode&MouseModeClick == 0 || top == MouseModeClick) {
 		w.Write(csiMouseClickOn)
 	}
-	if mode&MouseModeDrag != 0 && oldMode&MouseModeDrag == 0 {
+	if mode&MouseModeDrag != 0 && (oldMode&MouseModeDrag == 0 || top == MouseModeDrag) {
 		w.Write(csiMouseDragOn)
 	}
-	if mode&MouseModeMotion != 0 && oldMode&MouseModeMotion == 0 {
+	if mode&MouseModeMotion != 0 && (oldMode&MouseModeMotion == 0 || top == MouseModeMotion) {
 		w.Write(csiMouseMotionOn)
 	}
 
