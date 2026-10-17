@@ -376,3 +376,18 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// A Terminal built over a caller's backend draws a flushed frame to it
+func TestNewWithBackendFlushesToTheBackend(t *testing.T) {
+	f := &fakeBackend{}
+	term := NewWithBackend(f, ColorMode256)
+	if err := term.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer term.Fini()
+	if term.ColorMode() != ColorMode256 {
+		t.Fatalf("color mode %v", term.ColorMode())
+	}
+	term.Flush([]Cell{{Rune: 'x'}}, 1, 1)
+	waitFor(t, "the frame to reach the backend", func() bool { return strings.Contains(f.written(), "x") })
+}
