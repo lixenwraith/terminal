@@ -156,6 +156,14 @@ func New(colorMode ...ColorMode) Terminal {
 		c = ColorModeNone
 	}
 
+	return NewWithBackend(b, c)
+}
+
+// NewWithBackend creates a Terminal over b in color mode c, for a pipe, an
+// in-process emulator or a test standing in for the tty. b must not be nil;
+// the Terminal calls its Init on Init and its Fini on Fini, and writes to it
+// on its own goroutine as New's does
+func NewWithBackend(b Backend, c ColorMode) Terminal {
 	return newTerm(b, c)
 }
 

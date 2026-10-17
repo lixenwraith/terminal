@@ -35,6 +35,11 @@ consoles with VT processing, and browsers via xterm.js (WASM builds).
 Shared code carries no build tags: cell diffing, ANSI generation, escape parsing.
 Platform specifics are isolated in the `Backend` implementations.
 
+`NewWithBackend(b, mode)` builds a Terminal over a `Backend` of the caller's
+own: a pipe, an in-process emulator or a test standing in for the tty. It
+behaves as `New`'s Terminal does, the writer goroutine included; `New` is
+`NewWithBackend` over the platform's backend and the detected color mode.
+
 ### Rendering pipeline
 
 The application owns a flat `[]Cell` buffer (row-major, `cells[y*width+x]`) and
