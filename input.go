@@ -663,3 +663,30 @@ func decodeRune(data []byte) (rune, int) {
 
 	return r, size
 }
+
+// ControlKey is the key a terminal reads for Ctrl with a printable character: the
+// control byte that pair sends, parsed as input parsing reads it. Letters of
+// either case, space and '@', '[' '\' ']' '^' '_', '-' and '/' as '_', and the
+// digits 2 to 7 have one; ok is false for any other character.
+func ControlKey(r rune) (Key, bool) {
+	var b byte
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		b = byte(r) & 0x1f
+	case r == ' ', r == '@', r == '2':
+		b = 0x00
+	case r == '[', r == '3':
+		b = 0x1b
+	case r == '\\', r == '4':
+		b = 0x1c
+	case r == ']', r == '5':
+		b = 0x1d
+	case r == '^', r == '6':
+		b = 0x1e
+	case r == '_', r == '-', r == '/', r == '7':
+		b = 0x1f
+	default:
+		return KeyNone, false
+	}
+	return (*inputReader)(nil).parseControl(b).Key, true
+}
