@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"unicode"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/lixenwraith/color"
 )
@@ -71,6 +72,22 @@ func cellEqual(a, b Cell) bool {
 		a.Attrs == b.Attrs
 }
 
+// Cell has no padding, so a row compares as the bytes it occupies; the assertion
+// fails to compile should a field change leave padding behind
+var _ [0]struct{} = [unsafe.Sizeof(Cell{}) - unsafe.Sizeof(rune(0)) - 2*unsafe.Sizeof(color.RGB{}) - unsafe.Sizeof(Attr(0))]struct{}{}
+
+// rowEqual reports whether two rows of cells hold the same cells, as one memcmp
+func rowEqual(a, b []Cell) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	n := len(a) * int(unsafe.Sizeof(Cell{}))
+	return bytes.Equal(unsafe.Slice((*byte)(unsafe.Pointer(&a[0])), n), unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), n))
+}
+
 // flush renders the back buffer into buf, diffing against front buffer
 func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	if width != o.width || height != o.height {
@@ -86,6 +103,10 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 
 	for y := 0; y < height; y++ {
 		rowStart := y * width
+		// Most rows of a frame are unchanged; one compare settles each of those
+		if rowEqual(cells[rowStart:rowStart+width], o.front[rowStart:rowStart+width]) {
+			continue
+		}
 
 		rowEnd := width
 		for rowEnd > 0 && cellEqual(cells[rowStart+rowEnd-1], o.front[rowStart+rowEnd-1]) {
