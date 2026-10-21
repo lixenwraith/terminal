@@ -160,6 +160,9 @@ func (b *unixBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
 	}
 }
 
+// keySources: the key protocol, which the terminal is asked about
+func (b *unixBackend) keySources() KeySource { return KeySourceProtocol }
+
 func (b *unixBackend) SetResizeHandler(handler func(width, height int)) {
 	b.resizeStopCh = make(chan struct{})
 	b.resizeDoneCh = make(chan struct{})

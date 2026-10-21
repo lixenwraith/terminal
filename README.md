@@ -224,7 +224,8 @@ division approximation; `SoftLight` uses init-time LUTs replacing `math.Sqrt`.
 
 - `EventKey` — `Key` for named keys (`KeyEnter`, `KeyUp`, `KeyCtrlC`, ...),
   `Key == KeyRune` with `Rune` set for printable input, `Modifiers` bitmask
-  (`ModShift`, `ModAlt`, `ModCtrl`)
+  (`ModShift`, `ModAlt`, `ModCtrl`), `Action` (`KeyPress`, and `KeyRepeat` and
+  `KeyRelease` while releases are reported; see below)
 - `EventMouse` — 0-indexed `MouseX/Y`, `MouseBtn` (buttons, wheel),
   `MouseAction` (press/release/move/drag), modifiers. Enable via
   `SetMouseMode(MouseModeClick | MouseModeDrag)`; SGR protocol only.
@@ -232,6 +233,8 @@ division approximation; `SoftLight` uses init-time LUTs replacing `math.Sqrt`.
 - `EventPaste` — `Text` holds a whole paste, as sent, control characters
   included. Enable via `SetPasteMode(true)` (bracketed paste); off, a paste
   arrives as keys, its newlines pressing Enter.
+- `EventKeyReport` — the outcome of a `SetKeyReport` ask: `Report` and `Source`
+- `EventFocus` — `Focused`, while releases come through the terminal's protocol
 - `EventError`, `EventClosed`
 
 A standalone ESC press is disambiguated from escape sequences by a short input-idle timeout (one ~10ms poll cycle).
@@ -243,6 +246,69 @@ On Unix, a redirected stdin or stdout is replaced by `/dev/tty`, so
 `app > out.toml` and `cmd | app` keep both as data while the application
 draws and reads keys on the terminal.
 `PostEvent` injects synthetic events (used for clean shutdown of blocked `PollEvent`).
+
+### Key releases
+
+A terminal reports presses: a key held down arrives as more presses at the
+keyboard's repeat rate, and nothing says when it comes up. A game that needs
+holds asks for releases:
+
+```go
+term.SetKeyReport(terminal.KeyReportReleases, terminal.KeySourceConsole|terminal.KeySourceProtocol)
+```
+
+The ask returns at once. An `EventKeyReport` follows with what the terminal
+reports now (`Report`) and where releases come from (`Source`), so a game
+learns the outcome of every ask and can fall back, to taps for one, where
+there are none. `SetKeyReport(terminal.KeyReportPresses, 0)` gives the source
+back. Until a game asks for releases, nothing is sent to the terminal or
+switched, and every key event is a press, as before.
+
+While releases are reported:
+
+- Each key event carries its `Action`: `KeyPress`, `KeyRepeat` while held, and
+  `KeyRelease`. A release carries what its press carried, paired by physical
+  key, so letting go of Shift first still releases `'A'`, not `'a'`.
+- A key event the terminal names no physical key for (text from an input
+  method, a key its protocol leaves out) can't be held: its release follows
+  at once.
+- Every hold ends. Focus leaving, the console switching away, a change of
+  source and `Fini` release the keys held with `Lost` set, since their own
+  releases won't arrive. A press of a key already held means its release was
+  lost (a terminal's own mode can swallow one): the old hold ends, `Lost`,
+  before the new press.
+
+Releases come from the first of these sources a game allows that the
+terminal has:
+
+- `KeySourceProtocol`: the terminal's key event protocol, CSI u with event
+  types. The package asks the terminal whether it has the protocol (`CSI ? u`,
+  fenced by a DA1 request every terminal answers), pushes its flags and
+  confirms what they came to before reporting releases; it goes by the
+  terminal's answers, never by `TERM` or the terminal's name. Alacritty 0.13
+  and later is the reference (Enter, Tab and Backspace release from 0.15).
+  Other terminals that answer the same way (foot, Ghostty, WezTerm with its
+  opt-in setting, recent Konsole) should work but are untested. Works over ssh.
+  tmux, screen and mosh don't pass the protocol through, and VTE terminals and
+  xterm don't have it; there the answer is presses after one round trip. The
+  flags are popped when the game goes back to presses, at `Fini`, and in
+  `EmergencyReset`.
+
+  With the protocol on, every key arrives as an escape code, and each press
+  reads as the key a legacy terminal sends for it reads, so a game can keep
+  the protocol on for its whole run: Shift goes into the character, Ctrl with
+  a character becomes its control key, and Alt stays a modifier. Ctrl with a
+  character that has no control key (Ctrl+1) keeps `ModCtrl`, which a legacy
+  terminal can't send. Escape no longer waits out the ESC timeout. Lone
+  modifier keys, media keys and F13 and up report nothing. Alacritty reports no
+  keys while its own Vi mode, search or hints run; a key held then ends on its
+  next press, or as focus leaves.
+
+`KeyHolds` is the pairing on its own, for a host that reads its platform's key
+events and builds `Event`s itself (`KeySourceHost`): it gives each release its
+press's key and turns the contradictions above into `Lost` releases.
+
+A Terminal over a caller's backend (`NewWithBackend`) reports presses.
 
 ## WASM
 
