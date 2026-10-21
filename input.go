@@ -75,6 +75,12 @@ type inputReader struct {
 	asks    chan keyAsk
 	write   func(seq []byte, pushed bool) bool
 
+	// The console the backend runs on, nil for none, and how the reader
+	// switches its keyboard raw, and back
+	console    keyConsole
+	keysRaw    func() (ok, again bool)
+	keysCooked func()
+
 	// Key reporting, the reader's own: the ask it works toward and whether it
 	// is still to be answered, what the terminal reports of each key and the
 	// source releases come from, whether focus reports are parsed, and the
@@ -95,6 +101,11 @@ type inputReader struct {
 	protoReported int
 	protoHas      int8
 	decoding      bool
+
+	// The console: whether its keyboard refused to go raw, for good (-1) or
+	// for this ask (-2), and the parser reading what it types for a key
+	consoleHas int8
+	typer      *inputReader
 
 	mu      sync.Mutex
 	running bool
@@ -170,9 +181,21 @@ func (r *inputReader) readLoop() {
 		// Blocking read from backend
 		data, err := r.backend.Read(r.stopCh)
 		if err != nil {
-			r.holds.ReleaseAll(r.sendEvent)
+			r.end()
 			r.sendEvent(Event{Type: EventError, Err: err})
 			return
+		}
+
+		if r.source == KeySourceConsole {
+			r.consoleRead(data)
+			select {
+			case <-r.stopCh:
+				r.end()
+				r.sendEvent(Event{Type: EventClosed})
+				return
+			default:
+				continue
+			}
 		}
 
 		// A paste whose end marker never comes ends when input pauses, so
@@ -192,7 +215,7 @@ func (r *inputReader) readLoop() {
 			}
 			select {
 			case <-r.stopCh:
-				r.holds.ReleaseAll(r.sendEvent)
+				r.end()
 				r.sendEvent(Event{Type: EventClosed})
 				return
 			default:
@@ -215,6 +238,14 @@ func (r *inputReader) readLoop() {
 				r.buf = r.buf[:len(r.buf)-consumed]
 			}
 		}
+	}
+}
+
+// end releases what is held as input ends, and the console's keyboard
+func (r *inputReader) end() {
+	r.holds.ReleaseAll(r.sendEvent)
+	if r.source == KeySourceConsole {
+		r.console.cooked()
 	}
 }
 

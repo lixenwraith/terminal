@@ -133,6 +133,7 @@ type termImpl struct {
 	mouseMode   MouseMode
 	paste       bool
 	keyProto    bool // the key protocol's flags are pushed
+	consoleRaw  bool // the console's keyboard is raw: mouse reports wait
 
 	// Output reaches the terminal on writeLoop's goroutine, so a terminal that
 	// stops reading holds that goroutine rather than whoever draws. queued is what
@@ -144,7 +145,8 @@ type termImpl struct {
 	heldW      int
 	heldH      int
 	holding    bool
-	writeSince atomic.Int64 // unix nanoseconds the write out began; zero when none is
+	writeSince atomic.Int64  // unix nanoseconds the write out began; zero when none is
+	drained    chan struct{} // a drain left nothing queued
 	wake       chan struct{}
 	quit       chan struct{}
 	writerDone chan struct{}
@@ -186,6 +188,7 @@ func newTerm(b Backend, c ColorMode) *termImpl {
 		syntheticCh: make(chan Event, 16),
 		resizeCh:    make(chan ResizeEvent, 1),
 		wake:        make(chan struct{}, 1),
+		drained:     make(chan struct{}, 1),
 		quit:        make(chan struct{}),
 		writerDone:  make(chan struct{}),
 	}
@@ -212,6 +215,9 @@ func (t *termImpl) Init() error {
 	t.input = newInputReader(t.backend)
 	t.input.sources = backendKeySources(t.backend)
 	t.input.write = t.keyWrite
+	if t.input.console = backendConsole(t.backend); t.input.console != nil {
+		t.input.keysRaw, t.input.keysCooked = t.keysRaw, t.keysCooked
+	}
 
 	// Set resize handler on backend
 	t.backend.SetResizeHandler(func(w, h int) {
@@ -519,7 +525,17 @@ func (t *termImpl) SetMouseMode(mode MouseMode) error {
 	if !t.initialized || t.finalized {
 		return nil
 	}
+	if t.consoleRaw {
+		t.mouseMode = mode // reported once the console's keyboard is cooked again
+		return nil
+	}
+	t.setMouseModeLocked(mode)
+	return nil
+}
 
+// setMouseModeLocked writes what moves the terminal's mouse reporting to mode.
+// Caller MUST hold mu.
+func (t *termImpl) setMouseModeLocked(mode MouseMode) {
 	oldMode := t.mouseMode
 	t.mouseMode = mode
 
@@ -576,7 +592,6 @@ func (t *termImpl) SetMouseMode(mode MouseMode) error {
 	}
 
 	t.sendLocked()
-	return nil
 }
 
 // SetPasteMode turns bracketed paste on or off
@@ -624,6 +639,79 @@ func (t *termImpl) keyWrite(seq []byte, pushed bool) bool {
 	return true
 }
 
+// consoleDrainTimeout bounds how long switching a console's keyboard raw waits
+// for the console to take what is queued, its mouse reports off among it
+const consoleDrainTimeout = 500 * time.Millisecond
+
+// keysRaw switches the console's keyboard raw for the input reader: false
+// when it stays cooked, and whether it may not for a later ask. The console
+// types its mouse reports into the input the keycodes come through, so they
+// are off while it is raw, the console having taken that before the switch,
+// which drops reports already sent.
+func (t *termImpl) keysRaw() (ok, again bool) {
+	c := t.input.console
+	if !c.prepare() {
+		return false, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.initialized || t.finalized {
+		return false, false
+	}
+	mode := t.mouseMode
+	if mode != MouseModeNone {
+		t.setMouseModeLocked(MouseModeNone)
+		t.mouseMode = mode
+	}
+	t.consoleRaw = true
+	if t.idleLocked(consoleDrainTimeout) && !t.finalized && c.raw() {
+		return true, false
+	}
+	t.mouseBackLocked()
+	return false, !t.finalized
+}
+
+// keysCooked switches the console's keyboard back for the input reader, and
+// mouse reports on again
+func (t *termImpl) keysCooked() {
+	t.input.console.cooked()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.initialized {
+		t.mouseBackLocked()
+	}
+}
+
+// mouseBackLocked ends the hold on mouse reports the console's keyboard put
+// while raw, reporting as asked. Caller MUST hold mu.
+func (t *termImpl) mouseBackLocked() {
+	t.consoleRaw = false
+	if mode := t.mouseMode; mode != MouseModeNone && !t.finalized {
+		t.mouseMode = MouseModeNone
+		t.setMouseModeLocked(mode)
+	}
+}
+
+// idleLocked waits, mu released meanwhile, until the terminal has taken all
+// that is queued, or for timeout; it returns with mu held, and whether the
+// queue emptied. Caller MUST hold mu.
+func (t *termImpl) idleLocked(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for len(t.queued) > 0 || t.writeSince.Load() != 0 {
+		left := time.Until(deadline)
+		if left <= 0 || t.finalized {
+			return false
+		}
+		t.mu.Unlock()
+		select {
+		case <-t.drained:
+		case <-time.After(left):
+		}
+		t.mu.Lock()
+	}
+	return true
+}
+
 // SetKeyReport hands the ask to the input reader, which answers it
 func (t *termImpl) SetKeyReport(report KeyReport, allow KeySource) error {
 	if report > KeyReportReleases {
@@ -642,6 +730,9 @@ func (t *termImpl) SetKeyReport(report KeyReport, allow KeySource) error {
 // Call this from panic recovery if Fini() cannot be called normally. Given a
 // redirected stdout, it writes to the controlling terminal instead.
 func EmergencyReset(w io.Writer) {
+	// A console keyboard left raw types nothing a player can use
+	restoreConsoleKeys()
+
 	if f, ok := w.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
 		if tty := controllingTTY(); tty != nil {
 			defer tty.Close()

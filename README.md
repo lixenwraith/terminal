@@ -281,6 +281,53 @@ While releases are reported:
 Releases come from the first of these sources a game allows that the
 terminal has:
 
+- `KeySourceConsole`: the kernel console's own keyboard, on the console the
+  game runs on: a Linux VT (`/dev/ttyN`) or FreeBSD's vt(4) (`/dev/ttyvN`).
+  While releases are reported the package switches the keyboard to raw
+  keycodes, which the kernel allows without root (Linux's `K_MEDIUMRAW` on
+  the game's controlling tty, FreeBSD's `K_CODE` on a console the game has
+  open), and switches it back when the game goes back to presses, at `Fini`
+  and in `EmergencyReset`. Each key types what the console types for it
+  cooked, by the console's own keymap read at the switch. Switching to
+  another console ends the holds. The console's mouse reports pause while the
+  keyboard is raw, and a mouse paste then reads as keys. Never over ssh,
+  where the keyboard is the far terminal's.
+
+  On Linux that is `loadkeys` layouts, dead keys and compose, the locks and
+  their lights, Alt+F*n* and Alt+arrows switching consoles, and cursor keys
+  with modifiers from Linux 7.1. Left out while raw: codes typed with Alt on
+  the keypad, braille, Ctrl+Alt+Del, and Scroll Lock, which only lets stopped
+  output go on.
+
+  On FreeBSD it is `kbdmap` layouts and their accents, the locks and their
+  lights, Alt+F*n* and Print Screen switching consoles, codes typed with left
+  Alt on the keypad, and Alt as ESC before a character (right Alt too with
+  `kern.vt.enable_altgr=0`). Left out while raw: the machine's keys
+  (Ctrl+Alt+Del, the debugger, suspend), Shift+Insert's paste, and Scroll
+  Lock. With Scroll Lock on, the console's history mode takes every key, so
+  the keyboard stays as it is and the ask reports presses; an ask after
+  Scroll Lock goes off tries again. syscons (`kern.vty=sc`) has no console
+  source.
+
+  Before the first switch the package runs the game's binary again as
+  `console-guard`, which switches the keyboard back, restores the tty and
+  shows the cursor if the game dies where nothing of its own runs: `kill -9`,
+  the OOM killer, a Go fatal error. A game leading its console's session
+  (on Linux, run with `exec` from the login shell or by an autologin) takes
+  the console with it as it dies; the guard then opens it again to restore
+  it. The package's `init` turns the guard's run aside before `main`; the
+  `init`s of packages initialized before it run in the guard too, so keep
+  side effects out of them. On FreeBSD the guard goes by the game's name, so
+  `pkill -9` by that name ends it too: kill the game by its PID. Should the
+  guard be killed as well, switch the keyboard back from elsewhere: on Linux
+  `sudo kbd_mode -u -C /dev/ttyN`; FreeBSD has no command for it, so build
+  one:
+
+  ```sh
+  printf '#include <sys/ioctl.h>\n#include <sys/kbio.h>\nint main(void) { return ioctl(0, KDSKBMODE, K_XLATE); }\n' |
+      cc -x c -o /tmp/kbdxlate - && /tmp/kbdxlate < /dev/ttyvN
+  ```
+
 - `KeySourceProtocol`: the terminal's key event protocol, CSI u with event
   types. The package asks the terminal whether it has the protocol (`CSI ? u`,
   fenced by a DA1 request every terminal answers), pushes its flags and

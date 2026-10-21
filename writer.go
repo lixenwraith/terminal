@@ -52,5 +52,9 @@ func (t *termImpl) drain() {
 		t.writeSince.Store(0)
 		t.mu.Lock()
 	}
+	select {
+	case t.drained <- struct{}{}:
+	default:
+	}
 	t.mu.Unlock()
 }
