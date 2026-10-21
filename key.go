@@ -90,6 +90,31 @@ const (
 	ModCtrl  Modifier = 1 << 2
 )
 
+// KeyAction is what happened to a key. Only a terminal reporting releases (see
+// SetKeyReport) tells them apart; elsewhere every key event is a press, and a
+// key held down arrives as more presses at the keyboard's repeat rate.
+type KeyAction uint8
+
+const (
+	KeyPress   KeyAction = iota // the key went down
+	KeyRepeat                   // the keyboard repeated a key held down
+	KeyRelease                  // the key came up
+)
+
+// String returns the action's name
+func (a KeyAction) String() string {
+	switch a {
+	case KeyPress:
+		return "Press"
+	case KeyRepeat:
+		return "Repeat"
+	case KeyRelease:
+		return "Release"
+	default:
+		return "None"
+	}
+}
+
 // escapeSequence maps escape sequences to keys
 // Key: sequence after ESC [ (e.g., "A" for up arrow)
 type escapeSequence struct {

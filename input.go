@@ -16,10 +16,12 @@ type EventType uint8
 const (
 	EventKey EventType = iota
 	EventResize
-	EventPaste  // Bracketed paste, Text holds it
-	EventMouse  // SGR mouse reporting
-	EventError  // Read error
-	EventClosed // Input closed
+	EventPaste     // Bracketed paste, Text holds it
+	EventMouse     // SGR mouse reporting
+	EventError     // Read error
+	EventClosed    // Input closed
+	EventFocus     // The terminal gained or lost focus, while it reports releases through its protocol
+	EventKeyReport // What a SetKeyReport ask came to: Report through Source
 )
 
 // Event represents a terminal input event
@@ -28,16 +30,22 @@ type Event struct {
 	Key       Key
 	Rune      rune
 	Modifiers Modifier
-	Width     int    // For EventResize
-	Height    int    // For EventResize
-	Err       error  // For EventError
-	Text      string // For EventPaste: the pasted bytes as sent, controls included
+	Action    KeyAction // For EventKey: KeyPress unless the terminal reports releases
+	Lost      bool      // For a KeyRelease the package made for a hold whose own release can't arrive
+	Width     int       // For EventResize
+	Height    int       // For EventResize
+	Err       error     // For EventError
+	Text      string    // For EventPaste: the pasted bytes as sent, controls included
+	Focused   bool      // For EventFocus: whether the terminal now has focus
+	Report    KeyReport // For EventKeyReport: what the terminal now reports of each key
+	Source    KeySource // For EventKeyReport: the source releases come from, zero for presses
 
 	// Mouse event fields
 	MouseX      int
 	MouseY      int
 	MouseBtn    MouseButton
 	MouseAction MouseAction
+	Touch       bool // A touch, from a host that reads one; terminals report none
 }
 
 // inputReader handles raw stdin parsing
@@ -59,6 +67,12 @@ type inputReader struct {
 
 	// An over-long CSI sequence is being dropped up to its final byte
 	dropCSI bool
+
+	// Key reporting, the reader's own: what the terminal reports of each key,
+	// whether focus reports are parsed, and the keys a source reports held down
+	report KeyReport
+	focus  bool
+	holds  KeyHolds
 
 	mu      sync.Mutex
 	running bool
@@ -147,7 +161,7 @@ func (r *inputReader) readLoop() {
 			// Timeout (Unix poll) or empty read: a pending ESC, or two, was
 			// pressed alone; inside a paste it is text
 			if ev, ok := loneEscape[string(r.buf)]; ok && !r.pasting {
-				r.sendEvent(ev)
+				r.sendKey(0, ev)
 				r.buf = r.buf[:0]
 			}
 			select {
@@ -226,7 +240,7 @@ func (r *inputReader) parseInput(data []byte) int {
 
 		// Fast path: printable ASCII
 		if b >= 0x20 && b < 0x7f {
-			r.sendEvent(Event{Type: EventKey, Key: KeyRune, Rune: rune(b)})
+			r.sendKey(0, Event{Type: EventKey, Key: KeyRune, Rune: rune(b)})
 			i++
 			continue
 		}
@@ -245,8 +259,10 @@ func (r *inputReader) parseInput(data []byte) int {
 			}
 
 			// Only emit if not a swallowed unknown sequence
-			if ev.Key != KeyNone || ev.Type != EventKey {
+			if ev.Type != EventKey {
 				r.sendEvent(ev)
+			} else if ev.Key != KeyNone {
+				r.sendKey(0, ev)
 			}
 			i += consumed
 			continue
@@ -254,14 +270,14 @@ func (r *inputReader) parseInput(data []byte) int {
 
 		// Control characters
 		if b < 0x20 {
-			r.sendEvent(r.parseControl(b))
+			r.sendKey(0, r.parseControl(b))
 			i++
 			continue
 		}
 
 		// DEL
 		if b == 0x7f {
-			r.sendEvent(Event{Type: EventKey, Key: KeyBackspace})
+			r.sendKey(0, Event{Type: EventKey, Key: KeyBackspace})
 			i++
 			continue
 		}
@@ -281,7 +297,7 @@ func (r *inputReader) parseInput(data []byte) int {
 			}
 
 			rn, size := decodeRune(data[i:])
-			r.sendEvent(Event{Type: EventKey, Key: KeyRune, Rune: rn})
+			r.sendKey(0, Event{Type: EventKey, Key: KeyRune, Rune: rn})
 			i += size
 			continue
 		}
@@ -432,6 +448,12 @@ func (r *inputReader) parseCSI(data []byte) (int, Event) {
 		return csiMaxLen, Event{Type: EventKey, Key: KeyNone}
 	case data[2] == '<' && (data[n-1] == 'M' || data[n-1] == 'm'):
 		return n, parseSGRMouse(data[3:n-1], data[n-1])
+	case r.focus && n == 3 && (data[2] == 'I' || data[2] == 'O'):
+		// Holds end as focus leaves, since their releases go elsewhere
+		if data[2] == 'O' {
+			r.holds.ReleaseAll(r.sendEvent)
+		}
+		return n, Event{Type: EventFocus, Focused: data[2] == 'I'}
 	}
 
 	if key, mod, ok := lookupCSI(data[2:n]); ok {
@@ -624,6 +646,32 @@ func parseSGRParams(data []byte) (btn, x, y int, ok bool) {
 	}
 	y = val
 	return btn, x, y, true
+}
+
+// askKeys answers an ask for key reporting: with no source to report releases
+// through, every ask comes to presses
+func (r *inputReader) askKeys(report KeyReport, allow KeySource) {
+	r.sendEvent(Event{Type: EventKeyReport, Report: KeyReportPresses})
+}
+
+// sendKey sends a key event at the level the terminal reports. code names the
+// physical key the event came from, zero for one the terminal names none for:
+// at releases such a key can't be held, so its release follows at once.
+func (r *inputReader) sendKey(code uint32, ev Event) {
+	switch {
+	case r.report == KeyReportPresses:
+		if ev.Action != KeyRelease {
+			ev.Action = KeyPress
+			r.sendEvent(ev)
+		}
+	case code == 0:
+		ev.Action = KeyPress
+		r.sendEvent(ev)
+		ev.Action = KeyRelease
+		r.sendEvent(ev)
+	default:
+		r.holds.Report(code, ev, r.sendEvent)
+	}
 }
 
 // sendEvent sends an event to the channel, non-blocking

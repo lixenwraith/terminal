@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -97,6 +98,16 @@ type Terminal interface {
 	// SetPasteMode turns bracketed paste on or off: on, a paste arrives as
 	// one EventPaste rather than as keys, so its newlines don't press Enter
 	SetPasteMode(on bool) error
+
+	// SetKeyReport asks for keys to be reported at level report. Releases come
+	// through the first source in allow the terminal has, the console before
+	// the protocol; KeyReportPresses gives up the source in use. It returns at
+	// once, and an EventKeyReport follows with what the terminal reports now,
+	// so a game learns the outcome of every ask; asks the reader has not yet
+	// acted on are answered together, by the latest. A change of source ends
+	// the holds it leaves with Lost releases. Until an ask for releases, nothing
+	// is sent to the terminal or switched.
+	SetKeyReport(report KeyReport, allow KeySource) error
 }
 
 // ResizeEvent represents a terminal resize
@@ -573,6 +584,20 @@ func (t *termImpl) SetPasteMode(on bool) error {
 		w.Write(csiPasteOff)
 	}
 	t.sendLocked()
+	return nil
+}
+
+// SetKeyReport hands the ask to the input reader, which answers it
+func (t *termImpl) SetKeyReport(report KeyReport, allow KeySource) error {
+	if report > KeyReportReleases {
+		return fmt.Errorf("terminal: unknown key report %d", report)
+	}
+	t.mu.Lock()
+	ready := t.initialized && !t.finalized
+	t.mu.Unlock()
+	if ready {
+		t.input.askKeys(report, allow)
+	}
 	return nil
 }
 
