@@ -278,6 +278,32 @@ While releases are reported:
   lost (a terminal's own mode can swallow one): the old hold ends, `Lost`,
   before the new press.
 
+Releases come from the first of these sources a game allows that the
+terminal has:
+
+- `KeySourceProtocol`: the terminal's key event protocol, CSI u with event
+  types. The package asks the terminal whether it has the protocol (`CSI ? u`,
+  fenced by a DA1 request every terminal answers), pushes its flags and
+  confirms what they came to before reporting releases; it goes by the
+  terminal's answers, never by `TERM` or the terminal's name. Alacritty 0.13
+  and later is the reference (Enter, Tab and Backspace release from 0.15).
+  Other terminals that answer the same way (foot, Ghostty, WezTerm with its
+  opt-in setting, recent Konsole) should work but are untested. Works over ssh.
+  tmux, screen and mosh don't pass the protocol through, and VTE terminals and
+  xterm don't have it; there the answer is presses after one round trip. The
+  flags are popped when the game goes back to presses, at `Fini`, and in
+  `EmergencyReset`.
+
+  With the protocol on, every key arrives as an escape code, and each press
+  reads as the key a legacy terminal sends for it reads, so a game can keep
+  the protocol on for its whole run: Shift goes into the character, Ctrl with
+  a character becomes its control key, and Alt stays a modifier. Ctrl with a
+  character that has no control key (Ctrl+1) keeps `ModCtrl`, which a legacy
+  terminal can't send. Escape no longer waits out the ESC timeout. Lone
+  modifier keys, media keys and F13 and up report nothing. Alacritty reports no
+  keys while its own Vi mode, search or hints run; a key held then ends on its
+  next press, or as focus leaves.
+
 `KeyHolds` is the pairing on its own, for a host that reads its platform's key
 events and builds `Event`s itself (`KeySourceHost`): it gives each release its
 press's key and turns the contradictions above into `Lost` releases.

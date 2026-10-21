@@ -132,6 +132,7 @@ type termImpl struct {
 	finalized   bool
 	mouseMode   MouseMode
 	paste       bool
+	keyProto    bool // the key protocol's flags are pushed
 
 	// Output reaches the terminal on writeLoop's goroutine, so a terminal that
 	// stops reading holds that goroutine rather than whoever draws. queued is what
@@ -209,6 +210,8 @@ func (t *termImpl) Init() error {
 
 	// Create input reader wrapping backend
 	t.input = newInputReader(t.backend)
+	t.input.sources = backendKeySources(t.backend)
+	t.input.write = t.keyWrite
 
 	// Set resize handler on backend
 	t.backend.SetResizeHandler(func(w, h int) {
@@ -282,10 +285,20 @@ func (t *termImpl) Fini() {
 		w.Write(csiPasteOff)
 	}
 
-	// Stop handlers
+	// Key reports as the terminal had them, before the screen they were pushed on goes
+	if t.keyProto {
+		w.Write(csiKeyPop)
+		w.Write(csiFocusOff)
+		t.keyProto = false
+		keyProtoPushed.Store(false)
+	}
+	t.mu.Unlock()
+
+	// Stop handlers; the reader may be waiting on mu to write, and finds Fini begun
 	if t.input != nil {
 		t.input.stop()
 	}
+	t.mu.Lock()
 
 	// Show cursor
 	w.Write(csiCursorShow)
@@ -587,6 +600,30 @@ func (t *termImpl) SetPasteMode(on bool) error {
 	return nil
 }
 
+// keyProtoPushed is whether a Terminal has the key protocol's flags pushed, for
+// EmergencyReset to pop
+var keyProtoPushed atomic.Bool
+
+// keyWrite queues seq, the input reader's request, for the terminal unless Fini
+// has begun; pushed is whether the protocol's flags are pushed once it is
+// written, which Fini and EmergencyReset undo
+func (t *termImpl) keyWrite(seq []byte, pushed bool) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.initialized || t.finalized {
+		return false
+	}
+	t.releaseLocked()
+	t.output.buf.Write(seq)
+	t.sendLocked()
+	// A terminal that takes a request for its own (an old st restores the
+	// cursor on CSI ? u) has moved it as far as the next frame knows
+	t.output.invalidateCursor()
+	t.keyProto = pushed
+	keyProtoPushed.Store(pushed)
+	return true
+}
+
 // SetKeyReport hands the ask to the input reader, which answers it
 func (t *termImpl) SetKeyReport(report KeyReport, allow KeySource) error {
 	if report > KeyReportReleases {
@@ -618,6 +655,10 @@ func EmergencyReset(w io.Writer) {
 	w.Write(csiMouseClickOff)
 	w.Write(csiMouseSGROff)
 	w.Write(csiPasteOff)
+	if keyProtoPushed.Load() {
+		w.Write(csiKeyPop)
+		w.Write(csiFocusOff)
+	}
 
 	// Write sequences to provided writer
 	w.Write(csiCursorShow)

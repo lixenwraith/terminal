@@ -68,11 +68,33 @@ type inputReader struct {
 	// An over-long CSI sequence is being dropped up to its final byte
 	dropCSI bool
 
-	// Key reporting, the reader's own: what the terminal reports of each key,
-	// whether focus reports are parsed, and the keys a source reports held down
+	// Key reporting asks: the sources the backend has, the latest ask waiting
+	// for the reader, and how the reader writes to the terminal, false once it
+	// is closing; pushed is whether the protocol's flags are pushed after seq
+	sources KeySource
+	asks    chan keyAsk
+	write   func(seq []byte, pushed bool) bool
+
+	// Key reporting, the reader's own: the ask it works toward and whether it
+	// is still to be answered, what the terminal reports of each key and the
+	// source releases come from, whether focus reports are parsed, and the
+	// keys a source reports held down
+	want   keyAsk
+	answer bool
 	report KeyReport
+	source KeySource
 	focus  bool
 	holds  KeyHolds
+
+	// The protocol: an exchange in flight and when it is given up, the flags
+	// the terminal reported in it (-1 for none), whether the terminal has the
+	// protocol (-1 no, 0 not known, 1 yes), and whether key reports are
+	// decoded, from the push until the terminal has the pop
+	exchange      protoExchange
+	deadline      time.Time
+	protoReported int
+	protoHas      int8
+	decoding      bool
 
 	mu      sync.Mutex
 	running bool
@@ -83,6 +105,7 @@ func newInputReader(backend Backend) *inputReader {
 	return &inputReader{
 		backend: backend,
 		eventCh: make(chan Event, 256),
+		asks:    make(chan keyAsk, 1),
 		stopCh:  make(chan struct{}),
 		doneCh:  make(chan struct{}),
 		buf:     make([]byte, 0, 256),
@@ -142,9 +165,12 @@ func (r *inputReader) readLoop() {
 	}()
 
 	for {
+		r.serviceKeys()
+
 		// Blocking read from backend
 		data, err := r.backend.Read(r.stopCh)
 		if err != nil {
+			r.holds.ReleaseAll(r.sendEvent)
 			r.sendEvent(Event{Type: EventError, Err: err})
 			return
 		}
@@ -166,6 +192,7 @@ func (r *inputReader) readLoop() {
 			}
 			select {
 			case <-r.stopCh:
+				r.holds.ReleaseAll(r.sendEvent)
 				r.sendEvent(Event{Type: EventClosed})
 				return
 			default:
@@ -454,6 +481,19 @@ func (r *inputReader) parseCSI(data []byte) (int, Event) {
 			r.holds.ReleaseAll(r.sendEvent)
 		}
 		return n, Event{Type: EventFocus, Focused: data[2] == 'I'}
+	case data[2] == '?' && data[n-1] == 'u':
+		// The protocol's flags in force, answering a query
+		if v, ok := parseKeyParams(data[3 : n-1]); ok {
+			r.protoReply(int(max(v[0][0], 0)))
+		}
+		return n, Event{Type: EventKey, Key: KeyNone}
+	case data[2] == '?' && data[n-1] == 'c':
+		// Device attributes, which close an exchange: the terminal has
+		// answered all asked before them
+		r.exchangeDone(true)
+		return n, Event{Type: EventKey, Key: KeyNone}
+	case r.decoding && r.protoKey(data[2:n-1], data[n-1]):
+		return n, Event{Type: EventKey, Key: KeyNone}
 	}
 
 	if key, mod, ok := lookupCSI(data[2:n]); ok {
@@ -470,7 +510,13 @@ func (r *inputReader) parseSS3(data []byte) (int, Event) {
 		return 0, Event{}
 	}
 	if key, mod, ok := lookupSS3(data[2:3]); ok {
-		return 3, Event{Type: EventKey, Key: key, Modifiers: mod}
+		ev := Event{Type: EventKey, Key: key, Modifiers: mod}
+		if r.decoding && key != KeyRune {
+			// A terminal reporting by the protocol names this key too
+			r.sendKey(protoNamed+uint32(key), ev)
+			return 3, Event{Type: EventKey, Key: KeyNone}
+		}
+		return 3, ev
 	}
 	// Unknown SS3 - consume to prevent garbage
 	return 3, Event{Type: EventKey, Key: KeyNone}
@@ -646,12 +692,6 @@ func parseSGRParams(data []byte) (btn, x, y int, ok bool) {
 	}
 	y = val
 	return btn, x, y, true
-}
-
-// askKeys answers an ask for key reporting: with no source to report releases
-// through, every ask comes to presses
-func (r *inputReader) askKeys(report KeyReport, allow KeySource) {
-	r.sendEvent(Event{Type: EventKeyReport, Report: KeyReportPresses})
 }
 
 // sendKey sends a key event at the level the terminal reports. code names the
