@@ -57,6 +57,9 @@ type inputReader struct {
 	paste     []byte
 	pasteSeen time.Time
 
+	// An over-long CSI sequence is being dropped up to its final byte
+	dropCSI bool
+
 	mu      sync.Mutex
 	running bool
 }
@@ -184,6 +187,19 @@ func (r *inputReader) parseInput(data []byte) int {
 		case <-r.stopCh:
 			return i
 		default:
+		}
+
+		if r.dropCSI {
+			for i < n && data[i] >= 0x20 && data[i] <= 0x3f {
+				i++
+			}
+			if i < n {
+				r.dropCSI = false
+				if data[i] >= 0x40 && data[i] <= 0x7e {
+					i++
+				}
+			}
+			continue
 		}
 
 		if r.pasting {
@@ -321,7 +337,7 @@ func (r *inputReader) parseEscape(data []byte) (int, Event) {
 			return 0, Event{}
 		case bytes.HasPrefix(rest, pasteStart):
 			return 1, Event{Type: EventKey, Key: KeyEscape}
-		case rest[1] == '[' || rest[1] == 'O':
+		case rest[1] == 'O', rest[1] == '[' && csiLen(rest) != csiTyped:
 			n, ev := r.parseEscape(rest)
 			if n == 0 {
 				return 0, Event{}
@@ -351,55 +367,79 @@ func (r *inputReader) parseEscape(data []byte) (int, Event) {
 		return 2, Event{Type: EventKey, Key: KeyRune, Rune: rune(data[1]), Modifiers: ModAlt}
 	}
 
-	return 0, Event{}
+	// Alt+Backspace
+	if data[1] == 0x7f {
+		return 2, Event{Type: EventKey, Key: KeyBackspace, Modifiers: ModAlt}
+	}
+
+	// Alt+multibyte character; a byte no character starts with leaves Escape
+	size := utf8SeqLen(data[1])
+	if size == 0 {
+		return 1, Event{Type: EventKey, Key: KeyEscape}
+	}
+	if len(data) < 1+size {
+		return 0, Event{}
+	}
+	rn, n := decodeRune(data[1:])
+	return 1 + n, Event{Type: EventKey, Key: KeyRune, Rune: rn, Modifiers: ModAlt}
+}
+
+// csiMaxLen bounds a CSI sequence a terminal sends, with ESC [ and its final
+// byte; a longer one is dropped up to its final byte
+const csiMaxLen = 256
+
+// csiLen results other than a length: more may be arriving, a byte no
+// sequence holds came (ESC [ was typed, as Alt+[), or no final byte came
+// within csiMaxLen
+const (
+	csiPartial  = 0
+	csiTyped    = -1
+	csiOverlong = -2
+)
+
+// csiLen returns the length of the CSI sequence data starts with, or why it
+// has none yet. Parameter and intermediate bytes run to a final byte as in
+// ECMA-48, but for the Linux console's F1-F5, ESC [ [ A to E.
+func csiLen(data []byte) int {
+	i := 2
+	if len(data) > 2 && data[2] == '[' {
+		i = 3
+	}
+	for ; i < len(data); i++ {
+		if i == csiMaxLen {
+			return csiOverlong
+		}
+		switch b := data[i]; {
+		case b >= 0x40 && b <= 0x7e:
+			return i + 1
+		case b < 0x20 || b > 0x3f:
+			return csiTyped
+		}
+	}
+	return csiPartial
 }
 
 // parseCSI parses CSI sequence without allocation
 func (r *inputReader) parseCSI(data []byte) (int, Event) {
-	if len(data) < 3 {
+	n := csiLen(data)
+	switch {
+	case n == csiPartial:
 		return 0, Event{}
+	case n == csiTyped:
+		return 2, Event{Type: EventKey, Key: KeyRune, Rune: '[', Modifiers: ModAlt}
+	case n == csiOverlong:
+		r.dropCSI = true
+		return csiMaxLen, Event{Type: EventKey, Key: KeyNone}
+	case data[2] == '<' && (data[n-1] == 'M' || data[n-1] == 'm'):
+		return n, parseSGRMouse(data[3:n-1], data[n-1])
 	}
 
-	// SGR mouse: ESC [ < Btn ; X ; Y M/m
-	if data[2] == '<' {
-		return r.parseSGRMouse(data)
-	}
-
-	end := 2
-	maxScan := len(data)
-	if maxScan > 16 {
-		maxScan = 16
-	}
-
-	for end < maxScan {
-		b := data[end]
-		if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '~' {
-			end++
-			break
-		}
-		if b < 0x20 || b > 0x7e {
-			return 0, Event{}
-		}
-		end++
-	}
-
-	// Check if we found a terminator or ran out of data
-	if end <= 2 || end > maxScan {
-		return 0, Event{} // Incomplete
-	}
-
-	// Check last byte is valid terminator
-	lastByte := data[end-1]
-	if !((lastByte >= 'A' && lastByte <= 'Z') || (lastByte >= 'a' && lastByte <= 'z') || lastByte == '~') {
-		return 0, Event{} // Incomplete, no terminator found
-	}
-
-	if key, mod, ok := lookupCSI(data[2:end]); ok {
-		return end, Event{Type: EventKey, Key: key, Modifiers: mod}
+	if key, mod, ok := lookupCSI(data[2:n]); ok {
+		return n, Event{Type: EventKey, Key: key, Modifiers: mod}
 	}
 
 	// Unknown but valid CSI syntax - consume and return KeyNone
-	return end, Event{Type: EventKey, Key: KeyNone}
+	return n, Event{Type: EventKey, Key: KeyNone}
 }
 
 // parseSS3 parses SS3 sequence without allocation, returns length even for unknown sequences
@@ -483,31 +523,12 @@ func (r *inputReader) parseControl(b byte) Event {
 	return Event{Type: EventKey, Key: KeyNone}
 }
 
-// parseSGRMouse parses mouse SGR sequences
-func (r *inputReader) parseSGRMouse(data []byte) (int, Event) {
-	// Format: ESC [ < Btn ; X ; Y M/m
-	// Minimum: ESC [ < 0 ; 1 ; 1 M = 10 bytes
-	if len(data) < 10 {
-		return 0, Event{}
-	}
-
-	// Find terminator M or m
-	end := 3
-	for end < len(data) && end < 32 {
-		if data[end] == 'M' || data[end] == 'm' {
-			break
-		}
-		end++
-	}
-	if end >= len(data) || (data[end] != 'M' && data[end] != 'm') {
-		return 0, Event{}
-	}
-
-	// Parse: Btn;X;Y
-	params := data[3:end]
+// parseSGRMouse parses mouse SGR sequences, ESC [ < Btn ; X ; Y M/m, from
+// the parameters and final byte; a malformed one is dropped as KeyNone
+func parseSGRMouse(params []byte, final byte) Event {
 	btn, x, y, ok := parseSGRParams(params)
 	if !ok {
-		return 0, Event{}
+		return Event{Type: EventKey, Key: KeyNone}
 	}
 
 	ev := Event{Type: EventMouse, MouseX: x - 1, MouseY: y - 1} // Convert to 0-indexed
@@ -541,7 +562,7 @@ func (r *inputReader) parseSGRMouse(data []byte) (int, Event) {
 			ev.MouseBtn = MouseBtnNone // Release with no specific button
 		}
 
-		if data[end] == 'M' {
+		if final == 'M' {
 			if isMotion {
 				if ev.MouseBtn != MouseBtnNone {
 					ev.MouseAction = MouseActionDrag
@@ -567,7 +588,7 @@ func (r *inputReader) parseSGRMouse(data []byte) (int, Event) {
 		ev.Modifiers |= ModCtrl
 	}
 
-	return end + 1, ev
+	return ev
 }
 
 // parseSGRParams extracts btn, x, y from "Btn;X;Y" format

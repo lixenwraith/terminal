@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"cmp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -151,6 +152,92 @@ func TestDoubleEscape(t *testing.T) {
 }
 
 func key(r rune) Event { return Event{Type: EventKey, Key: KeyRune, Rune: r} }
+
+// parsed is what a reader sends for input arriving in chunks without pauses,
+// and how many bytes it still holds back for the rest of a sequence
+func parsed(chunks ...string) (events []Event, held int) {
+	r := &inputReader{eventCh: make(chan Event, 4096)}
+	r.pasteMode.Store(true)
+	var buf []byte
+	for _, c := range chunks {
+		buf = append(buf, c...)
+		buf = buf[r.parseInput(buf):]
+	}
+	close(r.eventCh)
+	for ev := range r.eventCh {
+		events = append(events, ev)
+	}
+	return events, len(buf)
+}
+
+// Every sequence the key tables hold reads as its key, and the key after it
+// as itself
+func TestKnownSequencesKeepTheirKeys(t *testing.T) {
+	for _, s := range csiSequences {
+		want := []Event{{Type: EventKey, Key: s.key, Modifiers: s.mod}, key('x')}
+		if got, _ := parsed("\x1b[" + s.seq + "x"); !slices.Equal(got, want) {
+			t.Errorf("ESC [ %s: got %+v, want %+v", s.seq, got, want)
+		}
+	}
+}
+
+// No input stops the reader: a reply of any length, Alt with Backspace or a
+// character past ASCII, a malformed mouse report, or ESC [ before a byte no
+// sequence holds (typed Alt+[) leave the keys after them read. An unknown or
+// over-long sequence is dropped up to its final byte, by ECMA-48.
+func TestNoInputStopsTheReader(t *testing.T) {
+	altBracket := Event{Type: EventKey, Key: KeyRune, Rune: '[', Modifiers: ModAlt}
+	enter := Event{Type: EventKey, Key: KeyEnter}
+	for _, c := range []struct {
+		name   string
+		chunks []string
+		want   []Event
+	}{
+		{"long reply", []string{"\x1b[?65;1;9;15;18;21;22cx"}, []Event{key('x')}},
+		{"split reply", []string{"\x1b[?65;1;9;", "15;18;21;22", "cx"}, []Event{key('x')}},
+		{"longest reply", []string{"\x1b[" + strings.Repeat("1", csiMaxLen-3) + "zx"}, []Event{key('x')}},
+		{"over-long reply", []string{"\x1b[" + strings.Repeat("1", csiMaxLen) + ";2", "3zx"}, []Event{key('x')}},
+		{"over-long cut", []string{"\x1b[" + strings.Repeat("1", csiMaxLen) + "\rx"}, []Event{enter, key('x')}},
+		{"unknown final", []string{"\x1b[2^x"}, []Event{key('x')}},
+		{"alt+backspace", []string{"\x1b\x7fx"}, []Event{{Type: EventKey, Key: KeyBackspace, Modifiers: ModAlt}, key('x')}},
+		{"alt+ö", []string{"\x1b\xc3", "\xb6x"}, []Event{{Type: EventKey, Key: KeyRune, Rune: 'ö', Modifiers: ModAlt}, key('x')}},
+		{"stray byte", []string{"\x1b\x80x"}, []Event{{Type: EventKey, Key: KeyEscape}, key('x')}},
+		{"alt+[ enter", []string{"\x1b[\rx"}, []Event{altBracket, enter, key('x')}},
+		{"alt+[ 1 é", []string{"\x1b[1éx"}, []Event{altBracket, key('1'), key('é'), key('x')}},
+		{"esc alt+[ enter", []string{"\x1b\x1b[\rx"}, []Event{{Type: EventKey, Key: KeyEscape, Modifiers: ModAlt}, key('['), enter, key('x')}},
+		{"bad mouse", []string{"\x1b[<0;1;1;1Mx"}, []Event{key('x')}},
+		{"mouse", []string{"\x1b[<0;5;3M\x1b[<0;5;3m"}, []Event{
+			{Type: EventMouse, MouseX: 4, MouseY: 2, MouseBtn: MouseBtnLeft, MouseAction: MouseActionPress},
+			{Type: EventMouse, MouseX: 4, MouseY: 2, MouseBtn: MouseBtnLeft, MouseAction: MouseActionRelease}}},
+	} {
+		if got, held := parsed(c.chunks...); !slices.Equal(got, c.want) || held != 0 {
+			t.Errorf("%s: got %+v holding %d, want %+v", c.name, got, held, c.want)
+		}
+	}
+}
+
+// Whatever bytes arrive, however reads split them, the reader sends the same
+// events, holds back no more than ESC and the longest sequence, and holds
+// nothing once four DEL, which end any sequence or character, and a paste
+// end follow
+func FuzzInputNeverStalls(f *testing.F) {
+	for _, s := range []string{"\x1b[?65;1;9;15;18;21;22cx", "\x1b\x7fx", "\x1b\xc3\xb6", "\x1b[\rx", "\x1b[<0;1;1;1Mx", "\x1b\x1b[A", "a\x1b[200~\x1b[A\x1b[201~b"} {
+		f.Add(s, uint(len(s)/2))
+	}
+	f.Fuzz(func(t *testing.T, in string, cut uint) {
+		cut %= uint(len(in)) + 1
+		whole, held := parsed(in)
+		if split, _ := parsed(in[:cut], in[cut:]); !slices.Equal(whole, split) {
+			t.Fatalf("%q: whole %+v, split at %d %+v", in, whole, cut, split)
+		}
+		if held > csiMaxLen+1 {
+			t.Fatalf("%q: holds %d bytes", in, held)
+		}
+		if _, held := parsed(in, "\x7f\x7f\x7f\x7f\x1b[201~"); held != 0 {
+			t.Fatalf("%q: stalled holding %d bytes", in, held)
+		}
+	})
+}
 
 // input is what a reader is given, in chunks, and the events it must send
 type input struct {
