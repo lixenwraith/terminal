@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || freebsd
 
 package terminal
 
@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -57,7 +58,8 @@ func startGuard(tty *os.File) (*keyGuard, error) {
 		return nil, err
 	}
 	defer r.Close()
-	// Not named after the game, so killing the game by name spares it
+	// Named apart from the game, which on Linux spares it a kill by the
+	// game's name
 	cmd := exec.Command(exe)
 	cmd.Args = []string{guardName}
 	cmd.Env = append(os.Environ(), guardEnv+"=1")
@@ -107,14 +109,42 @@ var guardReset = string(csiMouseMotionOff) + string(csiMouseDragOff) + string(cs
 func runGuard(cmds, tty *os.File) int {
 	signal.Ignore(syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM,
 		syscall.SIGTSTP, syscall.SIGTTIN, syscall.SIGTTOU, syscall.SIGPIPE)
+	path := consolePath(tty)
 	armed, mode, cooked := guardWait(cmds)
 	if armed {
-		guardRestore(tty, mode, func(fd int) {
+		guardRestore(tty, path, mode, func(fd int) {
 			unix.IoctlSetTermios(fd, tcsets, &cooked)
 			unix.Write(fd, []byte(guardReset))
 		})
 	}
 	return 0
+}
+
+// guardReopenFor is how long the guard tries to open again a console its
+// game took along
+const guardReopenFor = 2 * time.Second
+
+// guardReopen opens the console at path again, until its keyboard switches
+// back to mode or guardReopenFor passes, and has rest restore the rest
+// through it
+func guardReopen(path string, mode int, rest func(fd int)) {
+	if path == "" {
+		return
+	}
+	for end := time.Now().Add(guardReopenFor); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			continue
+		}
+		ok := unix.IoctlSetInt(int(f.Fd()), kdSetKeyboardMode, mode) == nil
+		if ok {
+			rest(int(f.Fd()))
+		}
+		f.Close()
+		if ok {
+			return
+		}
+	}
 }
 
 // guardWait reads the game's messages to their end: whether the guard was

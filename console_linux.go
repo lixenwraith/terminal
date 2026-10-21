@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -95,13 +93,6 @@ func openConsole(tty *os.File, cooked *unix.Termios) keyConsole {
 	c := &linuxConsole{tty: tty, fd: fd, vt: vt, termios: cooked}
 	c.kb.km = &c.km
 	return c
-}
-
-func ioctlPtr(fd int, req uint, arg unsafe.Pointer) error {
-	if _, _, e := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(req), uintptr(arg)); e != 0 {
-		return e
-	}
-	return nil
 }
 
 // prepare reads the keymap, starts the guard and lets output a Scroll Lock
@@ -216,6 +207,7 @@ func (c *linuxConsole) raw() bool {
 		return true
 	}
 	if c.guard == nil || !c.guard.arm(c.mode, c.termios) {
+		c.dropGuard()
 		return false
 	}
 	shift, lock := c.state()
@@ -225,7 +217,7 @@ func (c *linuxConsole) raw() bool {
 	}
 	c.kb.seed(shift, lock)
 	c.dec, c.away, c.isRaw = mediumRaw{}, false, true
-	rawLinuxConsole.Store(&consoleRestore{fd: c.fd, mode: c.mode, guard: c.guard})
+	rawConsoleKeys.Store(&consoleRestore{fd: c.fd, mode: c.mode, guard: c.guard})
 	return true
 }
 
@@ -243,7 +235,7 @@ func (c *linuxConsole) cookedLocked() {
 		return
 	}
 	c.isRaw = false
-	rawLinuxConsole.Store(nil)
+	rawConsoleKeys.Store(nil)
 	if unix.IoctlSetInt(c.fd, kdSetKeyboardMode, c.mode) == nil {
 		c.guard.disarm()
 	}
@@ -274,7 +266,7 @@ func (c *linuxConsole) keys(data []byte, key func(code uint32, action KeyAction,
 }
 
 // act does what a key asks of the console. Caller MUST hold mu.
-func (c *linuxConsole) act(a linuxAct) {
+func (c *linuxConsole) act(a consoleAct) {
 	if a.leds {
 		unix.IoctlSetInt(c.fd, kdSetLockFlags, int(c.kb.leds)|int(c.defLock)<<4)
 	}
@@ -336,26 +328,15 @@ func (c *linuxConsole) close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cookedLocked()
+	c.dropGuard()
+}
+
+// dropGuard ends the guard, which the next prepare starts again. Caller MUST
+// hold mu.
+func (c *linuxConsole) dropGuard() {
 	if c.guard != nil {
 		c.guard.close()
 		c.guard = nil
-	}
-}
-
-// consoleRestore is what restores a console keyboard left raw
-type consoleRestore struct {
-	fd, mode int
-	guard    *keyGuard
-}
-
-// rawLinuxConsole is the console a Terminal has raw, for EmergencyReset
-var rawLinuxConsole atomic.Pointer[consoleRestore]
-
-// restoreConsoleKeys switches back a console keyboard a Terminal has raw. It
-// takes no lock, for a reset from a panic that may hold one.
-func restoreConsoleKeys() {
-	if r := rawLinuxConsole.Swap(nil); r != nil && unix.IoctlSetInt(r.fd, kdSetKeyboardMode, r.mode) == nil {
-		r.guard.disarm()
 	}
 }
 
@@ -370,38 +351,36 @@ func nameGuard() {
 	unix.Prctl(unix.PR_SET_NAME, uintptr(unsafe.Pointer(&name[0])), 0, 0, 0)
 }
 
-// guardReopenFor is how long the guard waits for a console its game took
-// along to come free
-const guardReopenFor = 2 * time.Second
+// consolePath is the console's device, for the guard to open it again
+func consolePath(tty *os.File) string {
+	var st unix.Stat_t
+	if unix.Fstat(int(tty.Fd()), &st) != nil {
+		return ""
+	}
+	return "/dev/tty" + strconv.Itoa(int(unix.Minor(st.Rdev)))
+}
 
 // guardRestore switches the console keyboard back for the guard, then has
 // rest restore the console's tty. A game that led the console's session took
 // the console with it, the kernel hanging it up as the game died: the guard,
 // leading a session of its own then, opens the console again once it is free,
 // which makes it the guard's controlling tty and lets it switch the keyboard.
-func guardRestore(tty *os.File, mode int, rest func(fd int)) {
+func guardRestore(tty *os.File, path string, mode int, rest func(fd int)) {
 	fd := int(tty.Fd())
 	if err := unix.IoctlSetInt(fd, kdSetKeyboardMode, mode); err != unix.EIO && err != unix.EPERM {
 		rest(fd)
 		return
 	}
-	var st unix.Stat_t
-	if sid, _ := unix.Getsid(0); sid != os.Getpid() || unix.Fstat(fd, &st) != nil {
+	if sid, _ := unix.Getsid(0); sid != os.Getpid() {
 		return
 	}
-	path := "/dev/tty" + strconv.Itoa(int(unix.Minor(st.Rdev)))
-	for end := time.Now().Add(guardReopenFor); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
-		f, err := os.OpenFile(path, os.O_RDWR, 0)
-		if err != nil {
-			continue
-		}
-		if unix.IoctlSetInt(int(f.Fd()), kdSetKeyboardMode, mode) == nil {
-			rest(int(f.Fd()))
-			// Given up, the console isn't hung up again as the guard ends
-			unix.IoctlSetInt(int(f.Fd()), unix.TIOCNOTTY, 0)
-			f.Close()
-			return
-		}
-		f.Close()
-	}
+	guardReopen(path, mode, func(fd int) {
+		rest(fd)
+		// Given up, the console isn't hung up again as the guard ends
+		unix.IoctlSetInt(fd, unix.TIOCNOTTY, 0)
+	})
 }
+
+// flushInput drops the console's pending input as its keyboard switches, which
+// KDSKBMODE does itself here
+func flushInput(int) {}

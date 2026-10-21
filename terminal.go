@@ -216,7 +216,7 @@ func (t *termImpl) Init() error {
 	t.input.sources = backendKeySources(t.backend)
 	t.input.write = t.keyWrite
 	if t.input.console = backendConsole(t.backend); t.input.console != nil {
-		t.input.rawKeys = t.keysRaw
+		t.input.keysRaw, t.input.keysCooked = t.keysRaw, t.keysCooked
 	}
 
 	// Set resize handler on backend
@@ -643,31 +643,20 @@ func (t *termImpl) keyWrite(seq []byte, pushed bool) bool {
 // for the console to take what is queued, its mouse reports off among it
 const consoleDrainTimeout = 500 * time.Millisecond
 
-// keysRaw switches the console's keyboard raw or back for the input reader.
-// The console types its mouse reports into the input the keycodes come
-// through, so they are off while it is raw, the console having taken that
-// before the switch, which drops reports already sent.
-func (t *termImpl) keysRaw(raw bool) bool {
+// keysRaw switches the console's keyboard raw for the input reader: false
+// when it stays cooked, and whether it may not for a later ask. The console
+// types its mouse reports into the input the keycodes come through, so they
+// are off while it is raw, the console having taken that before the switch,
+// which drops reports already sent.
+func (t *termImpl) keysRaw() (ok, again bool) {
 	c := t.input.console
-	if !raw {
-		c.cooked()
-		t.mu.Lock()
-		defer t.mu.Unlock()
-		t.consoleRaw = false
-		if mode := t.mouseMode; mode != MouseModeNone && t.initialized && !t.finalized {
-			t.mouseMode = MouseModeNone
-			t.setMouseModeLocked(mode)
-		}
-		return true
-	}
-
 	if !c.prepare() {
-		return false
+		return false, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.initialized || t.finalized {
-		return false
+		return false, false
 	}
 	mode := t.mouseMode
 	if mode != MouseModeNone {
@@ -676,14 +665,31 @@ func (t *termImpl) keysRaw(raw bool) bool {
 	}
 	t.consoleRaw = true
 	if t.idleLocked(consoleDrainTimeout) && !t.finalized && c.raw() {
-		return true
+		return true, false
 	}
+	t.mouseBackLocked()
+	return false, !t.finalized
+}
+
+// keysCooked switches the console's keyboard back for the input reader, and
+// mouse reports on again
+func (t *termImpl) keysCooked() {
+	t.input.console.cooked()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.initialized {
+		t.mouseBackLocked()
+	}
+}
+
+// mouseBackLocked ends the hold on mouse reports the console's keyboard put
+// while raw, reporting as asked. Caller MUST hold mu.
+func (t *termImpl) mouseBackLocked() {
 	t.consoleRaw = false
 	if mode := t.mouseMode; mode != MouseModeNone && !t.finalized {
 		t.mouseMode = MouseModeNone
 		t.setMouseModeLocked(mode)
 	}
-	return false
 }
 
 // idleLocked waits, mu released meanwhile, until the terminal has taken all

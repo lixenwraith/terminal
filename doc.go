@@ -6,9 +6,9 @@
 //     the terminal's own default colors
 //   - Double-buffered output with cell-level diffing
 //   - Raw input parsing with escape sequence handling and bracketed paste
-//   - Key releases on request, from the Linux console's keyboard or the
-//     terminal's key event protocol (Alacritty's), and presses where there
-//     are neither
+//   - Key releases on request, from the Linux or FreeBSD console's keyboard
+//     or the terminal's key event protocol (Alacritty's), and presses where
+//     there are neither
 //   - Drawing on /dev/tty when stdin or stdout is redirected (Unix)
 //   - Resize detection (SIGWINCH on Unix, callback on WASM)
 //   - Clean terminal restoration on exit/panic

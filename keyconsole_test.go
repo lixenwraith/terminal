@@ -12,6 +12,7 @@ import (
 type fakeConsole struct {
 	fakeBackend
 	refuse   bool
+	notNow   int // raw refusals left, as a console that can't go raw just now
 	isRaw    bool
 	away     bool
 	prepares int
@@ -40,6 +41,10 @@ func (f *fakeConsole) prepare() bool {
 func (f *fakeConsole) raw() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.notNow > 0 {
+		f.notNow--
+		return false
+	}
 	f.isRaw, f.rawAt = true, f.out.Len()
 	f.kb.seed(0, 0)
 	return true
@@ -202,6 +207,37 @@ func TestConsoleRefusingIsAskedOnce(t *testing.T) {
 	}
 	if _, prepares, _, _, _, _ := f.state(); prepares != 1 {
 		t.Errorf("console asked %d times, want once", prepares)
+	}
+}
+
+// A console that can't go raw just now is asked again at the next ask, and
+// mouse reports come back on after the refusal
+func TestConsoleRefusingNowIsAskedAgain(t *testing.T) {
+	f := newFakeConsole(t)
+	f.notNow = 1
+	old := protoTimeout
+	protoTimeout = 50 * time.Millisecond
+	defer func() { protoTimeout = old }()
+	term := newTerm(f, ColorModeNone)
+	if err := term.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer term.Fini()
+	term.SetMouseMode(MouseModeClick)
+	term.SetKeyReport(KeyReportReleases, KeySourceConsole|KeySourceProtocol)
+	if ev := poll(t, term); ev.Type != EventKeyReport || ev.Report != KeyReportPresses {
+		t.Fatalf("answered %+v, want presses", ev)
+	}
+	waitFor(t, "mouse reports back on", func() bool {
+		_, _, out, _, _, _ := f.state()
+		return strings.Count(out, string(csiMouseClickOn)) == 2
+	})
+	term.SetKeyReport(KeyReportReleases, KeySourceConsole|KeySourceProtocol)
+	if ev := poll(t, term); ev.Type != EventKeyReport || ev.Source != KeySourceConsole {
+		t.Fatalf("answered %+v, want releases from the console", ev)
+	}
+	if _, prepares, _, _, _, _ := f.state(); prepares != 2 {
+		t.Errorf("console prepared %d times, want twice", prepares)
 	}
 }
 

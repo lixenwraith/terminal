@@ -113,13 +113,13 @@ func hold(code int, inner ...[]stroke) []stroke {
 }
 
 // typedBy is what the console types for strokes, and what they ask of it
-func typedBy(k *linuxKeys, strokes []stroke) (string, []linuxAct) {
+func typedBy(k *linuxKeys, strokes []stroke) (string, []consoleAct) {
 	var out []byte
-	var acts []linuxAct
+	var acts []consoleAct
 	for _, s := range strokes {
 		typed, act := k.key(s.code, s.down, s.down && k.isDown(s.code))
 		out = append(out, typed...)
-		if act != (linuxAct{}) {
+		if act != (consoleAct{}) {
 			acts = append(acts, act)
 		}
 	}
@@ -193,17 +193,17 @@ func TestLinuxConsoleKeysAskTheConsole(t *testing.T) {
 	cases := []struct {
 		name    string
 		strokes []stroke
-		want    []linuxAct
+		want    []consoleAct
 		leds    uint8
 	}{
-		{"alt f2", hold(keyLeftAlt, press(keyF2)), []linuxAct{{vt: 2}}, 0},
-		{"ctrl alt f1", hold(keyLeftCtrl, hold(keyLeftAlt, press(keyF1))), []linuxAct{{vt: 1}}, 0},
-		{"altgr f1", hold(keyRightAlt, press(keyF1)), []linuxAct{{vt: 13}}, 0},
-		{"alt left right", hold(keyLeftAlt, press(keyLeft, keyRight)), []linuxAct{{vt: vtPrev}, {vt: vtNext}}, 0},
-		{"caps lock twice", press(keyCapsLock, keyCapsLock), []linuxAct{{leds: true}, {leds: true}}, 0},
-		{"caps lock held", []stroke{{keyCapsLock, true}, {keyCapsLock, true}, {keyCapsLock, false}}, []linuxAct{{leds: true}}, ledCaps},
-		{"num lock", press(keyNumLock), []linuxAct{{leds: true}}, ledNum},
-		{"scroll lock", press(keyScrollLk), []linuxAct{{start: true}}, 0},
+		{"alt f2", hold(keyLeftAlt, press(keyF2)), []consoleAct{{vt: 2}}, 0},
+		{"ctrl alt f1", hold(keyLeftCtrl, hold(keyLeftAlt, press(keyF1))), []consoleAct{{vt: 1}}, 0},
+		{"altgr f1", hold(keyRightAlt, press(keyF1)), []consoleAct{{vt: 13}}, 0},
+		{"alt left right", hold(keyLeftAlt, press(keyLeft, keyRight)), []consoleAct{{vt: vtPrev}, {vt: vtNext}}, 0},
+		{"caps lock twice", press(keyCapsLock, keyCapsLock), []consoleAct{{leds: true}, {leds: true}}, 0},
+		{"caps lock held", []stroke{{keyCapsLock, true}, {keyCapsLock, true}, {keyCapsLock, false}}, []consoleAct{{leds: true}}, ledCaps},
+		{"num lock", press(keyNumLock), []consoleAct{{leds: true}}, ledNum},
+		{"scroll lock", press(keyScrollLk), []consoleAct{{start: true}}, 0},
 	}
 	for _, c := range cases {
 		k := &linuxKeys{km: testKeymap(t)}

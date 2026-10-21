@@ -58,12 +58,6 @@ const (
 	symHole    = 0xf200 // K_HOLE as the kernel keeps it: a key that does nothing
 )
 
-// Console switches a key asks for beside switching to a console by number
-const (
-	vtPrev = -1 // the console before this one
-	vtNext = -2 // the console after this one
-)
-
 // linuxKeymap is a Linux console keymap as KDGKBENT, KDGKBSENT and
 // KDGKBDIACRUC read it
 type linuxKeymap struct {
@@ -96,13 +90,6 @@ type linuxKeys struct {
 	deadNext  bool                // compose: the next character is a dead key's
 }
 
-// linuxAct is what a key asks of the console beside typing
-type linuxAct struct {
-	vt    int  // a console to switch to, from 1, or vtPrev or vtNext; zero for none
-	leds  bool // the lock flags changed
-	start bool // restart output stopped with Scroll Lock
-}
-
 // seed starts translation from the console's state: the modifiers it has
 // down and its lock flags; keys already down are not known
 func (k *linuxKeys) seed(shift, leds uint8) {
@@ -121,7 +108,7 @@ func (k *linuxKeys) isDown(code int) bool {
 
 // key translates one keycode event: down for a press, rep for a repeat. It
 // returns what the console types for it and what it asks of the console.
-func (k *linuxKeys) key(code int, down, rep bool) (typed []byte, act linuxAct) {
+func (k *linuxKeys) key(code int, down, rep bool) (typed []byte, act consoleAct) {
 	if code >= nrKeys {
 		return nil, act // past every keymap
 	}
@@ -336,8 +323,8 @@ func (k *linuxKeys) computeShift() {
 // The register and memory dumps, scrollback, Ctrl+Alt+Del, spawning a console
 // and the last console do nothing; SAK the kernel runs itself, raw or not.
 // Scroll Lock only ever restarts output, so a game can't be frozen.
-func (k *linuxKeys) spec(val byte, rep bool) ([]byte, linuxAct) {
-	var act linuxAct
+func (k *linuxKeys) spec(val byte, rep bool) ([]byte, consoleAct) {
+	var act consoleAct
 	switch val {
 	case 0: // K_HOLE
 		k.computeShift()

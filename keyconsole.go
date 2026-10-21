@@ -31,6 +31,19 @@ type keyConsole interface {
 	close()
 }
 
+// consoleAct is what a key asks of the console beside typing
+type consoleAct struct {
+	vt    int  // a console to switch to, from 1, or vtPrev or vtNext; zero for none
+	leds  bool // the lock flags changed
+	start bool // restart output stopped with Scroll Lock
+}
+
+// Console switches a key asks for beside switching to a console by number
+const (
+	vtPrev = -1 // the console before this one
+	vtNext = -2 // the console after this one
+)
+
 // consoleBackend is a backend on a kernel console
 type consoleBackend interface {
 	keyConsole() keyConsole
@@ -45,15 +58,23 @@ func backendConsole(b Backend) keyConsole {
 }
 
 // rawConsole switches the console's keyboard raw for releases; a console that
-// refuses is not asked again
+// refuses is not asked again, or not until the next ask when it may not
+// refuse then
 func (r *inputReader) rawConsole() {
 	// An ESC waiting for its timeout was Escape, pressed before the switch
 	if ev, ok := loneEscape[string(r.buf)]; ok {
 		r.sendKey(0, ev)
 	}
 	r.buf = r.buf[:0]
-	if r.rawKeys == nil || !r.rawKeys(true) {
+	if r.keysRaw == nil {
 		r.consoleHas = -1
+		return
+	}
+	if ok, again := r.keysRaw(); !ok {
+		r.consoleHas = -1
+		if again {
+			r.consoleHas = -2
+		}
 		return
 	}
 	r.holds = KeyHolds{}

@@ -95,6 +95,9 @@ func (r *inputReader) serviceKeys() {
 	select {
 	case a := <-r.asks:
 		r.want, r.answer = a, true
+		if r.consoleHas == -2 {
+			r.consoleHas = 0 // refused the last ask only
+		}
 	default:
 	}
 	if r.exchange != exchangeNone && time.Now().After(r.deadline) {
@@ -203,7 +206,7 @@ func (r *inputReader) leave() {
 	case KeySourceProtocol:
 		r.request(exchangePop, false, csiKeyPop, csiFocusOff, csiDA1)
 	case KeySourceConsole:
-		r.rawKeys(false)
+		r.keysCooked()
 	}
 }
 
