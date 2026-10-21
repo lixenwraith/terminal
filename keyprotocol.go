@@ -112,6 +112,8 @@ func (r *inputReader) target() KeySource {
 		return 0
 	case r.source != 0 && a.allow&r.source != 0:
 		return r.source
+	case a.allow&KeySourceConsole != 0 && r.consoleHas >= 0:
+		return KeySourceConsole
 	case a.allow&KeySourceProtocol != 0 && r.protoHas >= 0:
 		return KeySourceProtocol
 	}
@@ -128,6 +130,8 @@ func (r *inputReader) reconcile() {
 			r.sendEvent(Event{Type: EventKeyReport, Report: r.report, Source: r.source})
 		case r.source != 0:
 			r.leave()
+		case target == KeySourceConsole:
+			r.rawConsole()
 		case r.protoHas == 0:
 			r.request(exchangeProbe, false, csiKeyQuery, csiDA1)
 		default:
@@ -195,8 +199,11 @@ func (r *inputReader) leave() {
 	r.holds.ReleaseAll(r.sendEvent)
 	source := r.source
 	r.source, r.report, r.focus = 0, KeyReportPresses, false
-	if source == KeySourceProtocol {
+	switch source {
+	case KeySourceProtocol:
 		r.request(exchangePop, false, csiKeyPop, csiFocusOff, csiDA1)
+	case KeySourceConsole:
+		r.rawKeys(false)
 	}
 }
 

@@ -20,6 +20,7 @@ type unixBackend struct {
 	outFd   int
 	tty     *os.File // the controlling terminal, opened for a redirected end
 	oldTerm *term.State
+	console keyConsole // the console input comes from, nil off one
 
 	resizeStopCh chan struct{}
 	resizeDoneCh chan struct{}
@@ -56,12 +57,14 @@ func (b *unixBackend) Init() error {
 		}
 	}
 
+	cooked, _ := unix.IoctlGetTermios(b.inFd, tcgets)
 	old, err := term.MakeRaw(b.inFd)
 	if err != nil {
 		b.closeTTY()
 		return err
 	}
 	b.oldTerm = old
+	b.console = openConsole(b.in, cooked)
 	return nil
 }
 
@@ -78,6 +81,10 @@ func (b *unixBackend) Fini() {
 		close(b.resizeStopCh)
 		<-b.resizeDoneCh
 		b.resizeStopCh = nil
+	}
+	if b.console != nil {
+		b.console.close()
+		b.console = nil
 	}
 	if b.oldTerm != nil {
 		term.Restore(b.inFd, b.oldTerm)
@@ -160,8 +167,17 @@ func (b *unixBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
 	}
 }
 
-// keySources: the key protocol, which the terminal is asked about
-func (b *unixBackend) keySources() KeySource { return KeySourceProtocol }
+// keySources: the console's keyboard on a console, and the key protocol,
+// which the terminal is asked about
+func (b *unixBackend) keySources() KeySource {
+	if b.console != nil {
+		return KeySourceConsole | KeySourceProtocol
+	}
+	return KeySourceProtocol
+}
+
+// keyConsole is the console input comes from, nil off one
+func (b *unixBackend) keyConsole() keyConsole { return b.console }
 
 func (b *unixBackend) SetResizeHandler(handler func(width, height int)) {
 	b.resizeStopCh = make(chan struct{})

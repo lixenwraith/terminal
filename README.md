@@ -281,6 +281,31 @@ While releases are reported:
 Releases come from the first of these sources a game allows that the
 terminal has:
 
+- `KeySourceConsole`: the kernel console's own keyboard, on the Linux console
+  (a VT, `/dev/ttyN`) the game runs on. While releases are reported the
+  package switches the keyboard to raw keycodes (`K_MEDIUMRAW`), which the
+  kernel allows on the game's controlling tty without root, and switches it
+  back when the game goes back to presses, at `Fini` and in `EmergencyReset`.
+  Each key types what the console types for it cooked, by the console's own
+  keymap read at the switch: `loadkeys` layouts, dead keys and compose, the
+  locks and their lights, Alt+F*n* and Alt+arrows switching consoles, cursor
+  keys with modifiers from Linux 7.1. Switching to another console ends the
+  holds. Left out while raw: codes typed with Alt on the keypad, braille,
+  Ctrl+Alt+Del, and Scroll Lock, which only lets stopped output go on. The
+  console's mouse reports (gpm) pause while the keyboard is raw. Never over
+  ssh, where the keyboard is the far terminal's.
+
+  Before the first switch the package runs the game's binary again as
+  `console-guard`, which switches the keyboard back, restores the tty and
+  shows the cursor if the game dies where nothing of its own runs: `kill -9`,
+  the OOM killer, a Go fatal error. A game leading its console's session
+  (run with `exec` from the login shell, or by an autologin) takes the
+  console with it as it dies; the guard then opens it again to restore it.
+  The package's `init` turns the guard's run aside before `main`; the `init`s
+  of packages initialized before it run in the guard too, so keep side
+  effects out of them. Should the guard be killed as well,
+  `sudo kbd_mode -u -C /dev/ttyN` from elsewhere gives the keyboard back.
+
 - `KeySourceProtocol`: the terminal's key event protocol, CSI u with event
   types. The package asks the terminal whether it has the protocol (`CSI ? u`,
   fenced by a DA1 request every terminal answers), pushes its flags and
