@@ -121,6 +121,18 @@ func TestEachCellIsOneColumn(t *testing.T) {
 	}
 }
 
+// A frame that changes no cell writes nothing, so drawing an idle screen
+// again costs the terminal no bytes
+func TestUnchangedFrameWritesNothing(t *testing.T) {
+	o := newOutputBuffer(ColorMode256)
+	frame := []Cell{{Rune: 'a'}, {Rune: 'é'}}
+	o.flush(frame, len(frame), 1)
+	o.buf.Reset()
+	if o.flush(frame, len(frame), 1); o.buf.Len() != 0 {
+		t.Fatalf("unchanged frame wrote %q", o.buf.String())
+	}
+}
+
 // A paste arrives as one event, whatever reads split it into: an escape
 // inside it is text even when a poll times out on it, and a paste the
 // terminal never ends ends when input pauses, whether reads time out or

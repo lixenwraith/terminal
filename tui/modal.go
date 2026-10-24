@@ -36,10 +36,7 @@ func (r Region) Modal(opts ModalOpts) Region {
 			title = Truncate(title, r.W-4)
 			titleLen = RuneLen(title)
 		}
-		x := (r.W - titleLen) / 2
-		for i, ch := range title {
-			r.Cell(x+i, 0, ch, opts.TitleFg, opts.Bg, terminal.AttrBold)
-		}
+		r.Text((r.W-titleLen)/2, 0, title, opts.TitleFg, opts.Bg, terminal.AttrBold)
 	}
 
 	// Hint right-aligned on top edge
@@ -54,12 +51,7 @@ func (r Region) Modal(opts ModalOpts) Region {
 		if x < r.W/2 {
 			x = r.W / 2
 		}
-		for i, ch := range hint {
-			if x+i >= r.W-1 {
-				break
-			}
-			r.Cell(x+i, 0, ch, opts.HintFg, opts.Bg, terminal.AttrNone)
-		}
+		r.Sub(0, 0, r.W-1, 1).Text(x, 0, hint, opts.HintFg, opts.Bg, terminal.AttrNone)
 	}
 
 	// Return content region

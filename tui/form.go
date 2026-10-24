@@ -164,12 +164,7 @@ func (r Region) Form(state *FormState, opts FormOpts) int {
 
 		// Label
 		label := field.Label + ":"
-		for j, ch := range label {
-			if j >= labelW || j >= r.W {
-				break
-			}
-			r.Cell(j, y, ch, style.LabelFg, style.Bg, terminal.AttrNone)
-		}
+		r.Sub(0, y, labelW, 1).Text(0, 0, label, style.LabelFg, style.Bg, terminal.AttrNone)
 
 		// Field area
 		fieldX := labelW

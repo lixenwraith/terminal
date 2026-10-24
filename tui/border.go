@@ -149,10 +149,7 @@ func (r Region) Divider(y int, label string, line LineType, fg color.RGB) {
 			text = Truncate(text, r.W-2)
 			textLen = RuneLen(text)
 		}
-		startX := (r.W - textLen) / 2
-		for i, ch := range text {
-			r.Cell(startX+i, y, ch, fg, color.RGB{}, terminal.AttrBold)
-		}
+		r.Text((r.W-textLen)/2, y, text, fg, color.RGB{}, terminal.AttrBold)
 	}
 }
 

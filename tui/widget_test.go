@@ -467,3 +467,37 @@ func TestWindowShowsTheRowsInView(t *testing.T) {
 	}
 	r.Sub(8, 0, 4, 3).Window(10, &v, MonoTheme.Text, content) // no columns, past the right edge
 }
+
+// A label is drawn a column a rune, so one holding runes of more than a byte
+// keeps them together: each widget draws s as many times as it is given it
+func TestLabelsKeepTheirRunesTogether(t *testing.T) {
+	const s = "● é · ñ"
+	for _, c := range []struct {
+		name string
+		n    int
+		draw func(r Region)
+	}{
+		{"pane", 1, func(r Region) { r.Pane(PaneOpts{Title: s}) }},
+		{"modal", 2, func(r Region) { r.Modal(ModalOpts{Title: s, Hint: s}) }},
+		{"divider", 1, func(r Region) { r.Divider(0, s, LineSingle, color.RGB{}) }},
+		{"tabs", 2, func(r Region) { r.TabBar(0, []string{s, s}, 0, DefaultTabBarOpts()) }},
+		{"table", 2, func(r Region) { r.Table([]string{s}, [][]string{{s}}, TableOpts{}) }},
+		{"form", 1, func(r Region) { r.Form(NewFormState(s), FormOpts{}) }},
+		{"field", 1, func(r Region) { r.TextField(NewTextFieldState(""), TextFieldOpts{Placeholder: s}) }},
+		{"confirm", 4, func(r Region) {
+			r.ConfirmDialog(NewConfirmState(true), ConfirmOpts{Title: s, Message: s, YesLabel: s, NoLabel: s})
+		}},
+		{"alert", 3, func(r Region) { r.AlertDialog(AlertOpts{Title: s, Message: s, Button: s}) }},
+		{"progress", 1, func(r Region) { r.ProgressOverlay(DefaultProgressOpts(s, "", ProgressSpinner)) }},
+	} {
+		r := canvas(48, 14, MonoTheme)
+		c.draw(r)
+		rows := make([]string, r.H)
+		for y := range rows {
+			rows[y] = row(r, y)
+		}
+		if got := strings.Count(strings.Join(rows, "\n"), s); got != c.n {
+			t.Errorf("%s: %d of %d, rows %q", c.name, got, c.n, rows)
+		}
+	}
+}

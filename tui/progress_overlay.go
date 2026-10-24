@@ -194,10 +194,7 @@ func (r Region) ProgressOverlay(opts ProgressOverlayOpts) Region {
 			title = Truncate(title, overlayW-4)
 			titleLen = RuneLen(title)
 		}
-		titleX := (overlayW - titleLen) / 2
-		for i, ch := range title {
-			overlay.Cell(titleX+i, 0, ch, opts.AccentFg, opts.Bg, terminal.AttrBold)
-		}
+		overlay.Text((overlayW-titleLen)/2, 0, title, opts.AccentFg, opts.Bg, terminal.AttrBold)
 	}
 
 	// Content area

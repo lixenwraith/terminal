@@ -33,13 +33,7 @@ func (r Region) Pane(opts PaneOpts) Region {
 		if RuneLen(title) > r.W-4 {
 			title = Truncate(title, r.W-4)
 		}
-		x := 2
-		for i, ch := range title {
-			if x+i >= r.W-1 {
-				break
-			}
-			r.Cell(x+i, 0, ch, opts.TitleFg, opts.Bg, terminal.AttrBold)
-		}
+		r.Text(2, 0, title, opts.TitleFg, opts.Bg, terminal.AttrBold)
 	}
 
 	// Content region is everything inside the border. The title sits ON the border row.

@@ -225,11 +225,7 @@ func (r Region) ConfirmDialog(state *ConfirmState, opts ConfirmOpts) Region {
 			yesBg = style.ButtonFocusBg
 		}
 	}
-	for i, ch := range yesLabel {
-		if buttonX+i < content.W {
-			content.Cell(buttonX+i, buttonY, ch, yesFg, yesBg, terminal.AttrNone)
-		}
-	}
+	content.Text(buttonX, buttonY, yesLabel, yesFg, yesBg, terminal.AttrNone)
 
 	// No button
 	noX := buttonX + yesW + buttonGap
@@ -239,11 +235,7 @@ func (r Region) ConfirmDialog(state *ConfirmState, opts ConfirmOpts) Region {
 		noFg = style.ButtonFocusFg
 		noBg = style.ButtonFocusBg
 	}
-	for i, ch := range noLabel {
-		if noX+i < content.W {
-			content.Cell(noX+i, buttonY, ch, noFg, noBg, terminal.AttrNone)
-		}
-	}
+	content.Text(noX, buttonY, noLabel, noFg, noBg, terminal.AttrNone)
 
 	return content.Sub(0, 0, content.W, buttonY-1)
 }
@@ -317,11 +309,7 @@ func (r Region) AlertDialog(opts AlertOpts) Region {
 	buttonW := RuneLen(buttonLabel)
 	buttonX := (content.W - buttonW) / 2
 
-	for i, ch := range buttonLabel {
-		if buttonX+i < content.W {
-			content.Cell(buttonX+i, buttonY, ch, style.ButtonFocusFg, style.ButtonFocusBg, terminal.AttrNone)
-		}
-	}
+	content.Text(buttonX, buttonY, buttonLabel, style.ButtonFocusFg, style.ButtonFocusBg, terminal.AttrNone)
 
 	return content.Sub(0, 0, content.W, buttonY-1)
 }

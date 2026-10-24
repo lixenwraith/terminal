@@ -171,11 +171,7 @@ func (r Region) renderTableRow(y int, cells []string, widths []int, aligns []Ali
 			startX = x
 		}
 
-		for j, ch := range text {
-			if startX+j < r.W {
-				r.Cell(startX+j, y, ch, style.Fg, style.Bg, style.Attr)
-			}
-		}
+		r.TextStyled(startX, y, text, style)
 
 		x += w
 
