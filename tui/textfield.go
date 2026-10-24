@@ -108,12 +108,7 @@ func (r Region) TextField(state *TextFieldState, opts TextFieldOpts) int {
 		if RuneLen(placeholder) > viewportW {
 			placeholder = Truncate(placeholder, viewportW)
 		}
-		for i, ch := range placeholder {
-			if x+i >= contentX+contentW {
-				break
-			}
-			r.Cell(x+i, contentY, ch, style.PlaceholderFg, style.TextBg, terminal.AttrDim)
-		}
+		r.Text(x, contentY, placeholder, style.PlaceholderFg, style.TextBg, terminal.AttrDim)
 	} else {
 		// Scroll indicators
 		if state.Scroll > 0 && x > contentX {

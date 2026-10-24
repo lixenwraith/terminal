@@ -100,6 +100,7 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	}
 
 	w := &o.buf
+	start := w.Len()
 
 	for y := 0; y < height; y++ {
 		rowStart := y * width
@@ -194,7 +195,10 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 		}
 	}
 
-	w.Write(csiSGR0)
+	// A frame that changed no cell writes nothing, the reset included
+	if w.Len() > start {
+		w.Write(csiSGR0)
+	}
 	o.lastValid = false
 }
 

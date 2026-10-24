@@ -64,13 +64,7 @@ func (r Region) TabBar(y int, titles []string, active int, opts TabBarOpts) []Ta
 			r.Cell(x+j, y, ' ', style.Fg, style.Bg, style.Attr)
 		}
 
-		titleStart := x + opts.Padding
-		for j, ch := range title {
-			if titleStart+j >= r.W {
-				break
-			}
-			r.Cell(titleStart+j, y, ch, style.Fg, style.Bg, style.Attr)
-		}
+		r.TextStyled(x+opts.Padding, y, title, style)
 
 		for j := 0; j < opts.Padding; j++ {
 			pos := x + opts.Padding + RuneLen(title) + j
