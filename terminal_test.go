@@ -228,6 +228,35 @@ func TestNoInputStopsTheReader(t *testing.T) {
 	}
 }
 
+// A mouse report names its button in each bank: the main three, the wheel's four
+// directions, and back and forward among buttons 8 to 11, whose others, which no
+// application could tell apart from the main three before, are dropped
+func TestMouseReportsNameTheirButtons(t *testing.T) {
+	at := func(btn MouseButton, action MouseAction, mods Modifier) Event {
+		return Event{Type: EventMouse, MouseX: 4, MouseY: 2, MouseBtn: btn, MouseAction: action, Modifiers: mods}
+	}
+	for _, c := range []struct {
+		report string
+		want   []Event
+	}{
+		{"\x1b[<20;5;3M", []Event{at(MouseBtnLeft, MouseActionPress, ModShift|ModCtrl)}},
+		{"\x1b[<34;5;3M", []Event{at(MouseBtnRight, MouseActionDrag, 0)}},
+		{"\x1b[<35;5;3M", []Event{at(MouseBtnNone, MouseActionMove, 0)}},
+		{"\x1b[<64;5;3M", []Event{at(MouseBtnWheelUp, MouseActionPress, 0)}},
+		{"\x1b[<65;5;3M", []Event{at(MouseBtnWheelDown, MouseActionPress, 0)}},
+		{"\x1b[<66;5;3M", []Event{at(MouseBtnWheelLeft, MouseActionPress, 0)}},
+		{"\x1b[<75;5;3M", []Event{at(MouseBtnWheelRight, MouseActionPress, ModAlt)}},
+		{"\x1b[<128;5;3M\x1b[<128;5;3m", []Event{at(MouseBtnBack, MouseActionPress, 0), at(MouseBtnBack, MouseActionRelease, 0)}},
+		{"\x1b[<129;5;3M", []Event{at(MouseBtnForward, MouseActionPress, 0)}},
+		{"\x1b[<130;5;3Mx", []Event{key('x')}},
+		{"\x1b[<192;5;3Mx", []Event{key('x')}},
+	} {
+		if got, _ := parsed(c.report); !slices.Equal(got, c.want) {
+			t.Errorf("%q: got %+v, want %+v", c.report, got, c.want)
+		}
+	}
+}
+
 // Whatever bytes arrive, however reads split them, the reader sends the same
 // events, holds back no more than ESC and the longest sequence, and holds
 // nothing once four DEL, which end any sequence or character, and a paste

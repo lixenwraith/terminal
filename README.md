@@ -226,9 +226,11 @@ division approximation; `SoftLight` uses init-time LUTs replacing `math.Sqrt`.
   `Key == KeyRune` with `Rune` set for printable input, `Modifiers` bitmask
   (`ModShift`, `ModAlt`, `ModCtrl`), `Action` (`KeyPress`, and `KeyRepeat` and
   `KeyRelease` while releases are reported; see below)
-- `EventMouse` — 0-indexed `MouseX/Y`, `MouseBtn` (buttons, wheel),
-  `MouseAction` (press/release/move/drag), modifiers. Enable via
-  `SetMouseMode(MouseModeClick | MouseModeDrag)`; SGR protocol only.
+- `EventMouse` — 0-indexed `MouseX/Y`, `MouseBtn` (the three buttons, the
+  wheel's four directions, back and forward), `MouseAction`
+  (press/release/move/drag; a wheel step is a press with no release),
+  modifiers. Enable via `SetMouseMode(MouseModeClick | MouseModeDrag)`; SGR
+  protocol only.
 - `EventResize` — new `Width`/`Height`
 - `EventPaste` — `Text` holds a whole paste, as sent, control characters
   included. Enable via `SetPasteMode(true)` (bracketed paste); off, a paste

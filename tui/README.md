@@ -187,6 +187,28 @@ r.List(items, state.Selection, state.Offset, tui.ListOpts{CursorBg: color.DarkSl
 r.ScrollBar(r.W-1, state.Offset, state.Visible, state.Total, color.IronGray)
 ```
 
+`ScrollThumb` is the thumb a bar draws. `ScrollDrag` drives one by the
+pointer, rows counted from the track's top: a press on the thumb takes hold
+of it, a press on the track moves the thumb's middle there and takes hold, and
+a drag keeps the held row under the pointer, each returning the offset to show.
+
+```go
+var drag tui.ScrollDrag        // kept across events
+bar := r.Sub(r.W-1, 0, 1, r.H) // the column ScrollBar draws, in screen cells at bar.X, bar.Y
+
+// per left button event:
+switch ev.MouseAction {
+case terminal.MouseActionPress:
+    if ev.MouseX == bar.X {
+        state.ScrollTo(drag.Press(ev.MouseY-bar.Y, bar.H, state.Offset, state.Visible, state.Total))
+    }
+case terminal.MouseActionDrag:
+    state.ScrollTo(drag.Drag(ev.MouseY-bar.Y, bar.H, state.Offset, state.Visible, state.Total))
+case terminal.MouseActionRelease:
+    drag.Release()
+}
+```
+
 ### Modal dialog
 
 ```go
@@ -265,5 +287,6 @@ Pure logic, no rendering — usable independently:
   (widget default or row background) — check specific widget docs. A zero
   background with no Bg color bits is transparent: the cell keeps the
   background beneath it, bits and all.
-- Mouse hit testing: `TabBar` returns `[]TabBounds`; other widgets require
-  application-side geometry from the regions used.
+- Mouse hit testing: `TabBar` returns `[]TabBounds`, and `ScrollDrag` maps a
+  scrollbar's rows to offsets; other widgets require application-side
+  geometry from the regions used.
