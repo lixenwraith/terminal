@@ -623,7 +623,8 @@ func (r *inputReader) parseControl(b byte) Event {
 }
 
 // parseSGRMouse parses mouse SGR sequences, ESC [ < Btn ; X ; Y M/m, from
-// the parameters and final byte; a malformed one is dropped as KeyNone
+// the parameters and final byte; a malformed one, or a button past 9, is
+// dropped as KeyNone
 func parseSGRMouse(params []byte, final byte) Event {
 	btn, x, y, ok := parseSGRParams(params)
 	if !ok {
@@ -632,48 +633,34 @@ func parseSGRMouse(params []byte, final byte) Event {
 
 	ev := Event{Type: EventMouse, MouseX: x - 1, MouseY: y - 1} // Convert to 0-indexed
 
-	// Decode button and action
-	// Bits 0-1: button (0=left, 1=middle, 2=right, 3=release)
-	// Bit 5 (32): motion
-	// Bit 6 (64): scroll
-	buttonID := btn & 0x03
-	isMotion := btn&32 != 0
-	isScroll := btn&64 != 0
+	// Bits 0-1 number a button within its bank: the main three and none, the
+	// wheel's four directions (bit 6), or buttons 8 to 11 (bit 7); bit 5 is motion
+	id := btn & 0x03
+	switch btn & (64 | 128) {
+	case 0:
+		ev.MouseBtn = [...]MouseButton{MouseBtnLeft, MouseBtnMiddle, MouseBtnRight, MouseBtnNone}[id]
+	case 64:
+		ev.MouseBtn = [...]MouseButton{MouseBtnWheelUp, MouseBtnWheelDown, MouseBtnWheelLeft, MouseBtnWheelRight}[id]
+	case 128:
+		if id > 1 {
+			return Event{Type: EventKey, Key: KeyNone}
+		}
+		ev.MouseBtn = MouseBtnBack + MouseButton(id)
+	default:
+		return Event{Type: EventKey, Key: KeyNone}
+	}
 
-	if isScroll {
-		// Scroll: buttonID 0=up, 1=down
-		if buttonID == 0 {
-			ev.MouseBtn = MouseBtnWheelUp
-		} else {
-			ev.MouseBtn = MouseBtnWheelDown
-		}
-		ev.MouseAction = MouseActionPress // Scroll is instantaneous
-	} else {
-		// Regular button
-		switch buttonID {
-		case 0:
-			ev.MouseBtn = MouseBtnLeft
-		case 1:
-			ev.MouseBtn = MouseBtnMiddle
-		case 2:
-			ev.MouseBtn = MouseBtnRight
-		case 3:
-			ev.MouseBtn = MouseBtnNone // Release with no specific button
-		}
-
-		if final == 'M' {
-			if isMotion {
-				if ev.MouseBtn != MouseBtnNone {
-					ev.MouseAction = MouseActionDrag
-				} else {
-					ev.MouseAction = MouseActionMove
-				}
-			} else {
-				ev.MouseAction = MouseActionPress
-			}
-		} else {
-			ev.MouseAction = MouseActionRelease
-		}
+	switch {
+	case btn&64 != 0:
+		ev.MouseAction = MouseActionPress // A wheel step is its press
+	case final == 'm':
+		ev.MouseAction = MouseActionRelease
+	case btn&32 == 0:
+		ev.MouseAction = MouseActionPress
+	case ev.MouseBtn != MouseBtnNone:
+		ev.MouseAction = MouseActionDrag
+	default:
+		ev.MouseAction = MouseActionMove
 	}
 
 	// Extract modifiers from button byte

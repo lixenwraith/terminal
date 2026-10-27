@@ -10,8 +10,10 @@ const (
 	MouseBtnRight
 	MouseBtnWheelUp
 	MouseBtnWheelDown
-	MouseBtnBack    // Button 4 (if supported)
-	MouseBtnForward // Button 5 (if supported)
+	MouseBtnBack       // Button 8, a mouse's back side button
+	MouseBtnForward    // Button 9, its forward side button
+	MouseBtnWheelLeft  // A wheel tilted left, or a touchpad swiped so
+	MouseBtnWheelRight // A wheel tilted right, or a touchpad swiped so
 )
 
 // MouseAction represents the type of mouse event
@@ -52,6 +54,10 @@ func (b MouseButton) String() string {
 		return "Back"
 	case MouseBtnForward:
 		return "Forward"
+	case MouseBtnWheelLeft:
+		return "WheelLeft"
+	case MouseBtnWheelRight:
+		return "WheelRight"
 	default:
 		return "None"
 	}

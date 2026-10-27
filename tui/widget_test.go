@@ -468,6 +468,60 @@ func TestWindowShowsTheRowsInView(t *testing.T) {
 	r.Sub(8, 0, 4, 3).Window(10, &v, MonoTheme.Text, content) // no columns, past the right edge
 }
 
+// A press on a scrollbar's track moves the thumb's middle to it and a press on
+// the thumb leaves it, either taking hold; a drag keeps the held row under the
+// pointer, clamped at the ends, or as near as an offset can put it when there are
+// fewer offsets than rows. A bar with no thumb, or a row off it, holds nothing.
+func TestScrollDragHoldsTheThumbUnderThePointer(t *testing.T) {
+	near := func(tops []int, want, got int) bool {
+		for _, top := range tops {
+			if max(top-want, want-top) < max(got-want, want-got) {
+				return false
+			}
+		}
+		return true
+	}
+	for trackH := 3; trackH <= 10; trackH++ {
+		for total := 1; total <= 30; total++ {
+			for visible := 1; visible <= total+1; visible++ {
+				var tops []int
+				for o := 0; o <= total-visible; o++ {
+					top, _ := ScrollThumb(trackH, o, visible, total)
+					tops = append(tops, top)
+				}
+				for y := -1; y <= trackH; y++ {
+					var d ScrollDrag
+					from := (total - visible) / 3
+					fromTop, h := ScrollThumb(trackH, from, visible, total)
+					off := d.Press(y, trackH, from, visible, total)
+					top, _ := ScrollThumb(trackH, off, visible, total)
+					onThumb := func(top int) bool { return y >= top && y < top+h }
+					switch {
+					case h == 0 || y < 0 || y >= trackH:
+						if d.Active || off != from {
+							t.Fatalf("%d/%d/%d: a press at %d off the bar holds %v at %d", trackH, visible, total, y, d.Active, off)
+						}
+						continue
+					case onThumb(fromTop):
+						if off != from {
+							t.Fatalf("%d/%d/%d: a press on the thumb moved it %d to %d", trackH, visible, total, from, off)
+						}
+					case !near(tops, min(max(y-h/2, 0), trackH-h), top) || !onThumb(top) && slices.ContainsFunc(tops, onThumb):
+						t.Fatalf("%d/%d/%d: a press at %d starts the thumb at %d", trackH, visible, total, y, top)
+					}
+					for to := -2; to <= trackH+1; to++ {
+						got, _ := ScrollThumb(trackH, d.Drag(to, trackH, off, visible, total), visible, total)
+						if want := min(max(to-d.Grab, 0), trackH-h); !near(tops, want, got) {
+							t.Fatalf("%d/%d/%d: held at %d and dragged to %d, the thumb starts at %d, want near %d",
+								trackH, visible, total, d.Grab, to, got, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 // A label is drawn a column a rune, so one holding runes of more than a byte
 // keeps them together: each widget draws s as many times as it is given it
 func TestLabelsKeepTheirRunesTogether(t *testing.T) {
