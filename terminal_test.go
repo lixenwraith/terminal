@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"cmp"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -130,6 +131,25 @@ func TestUnchangedFrameWritesNothing(t *testing.T) {
 	o.buf.Reset()
 	if o.flush(frame, len(frame), 1); o.buf.Len() != 0 {
 		t.Fatalf("unchanged frame wrote %q", o.buf.String())
+	}
+}
+
+// Every cell a frame changes is written, wherever in its row it lies and however
+// wide the row: after a flush the screen the terminal holds is the frame
+func TestEveryChangedCellIsWritten(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	for _, width := range []int{1, 7, 8, 9, 17, 120} {
+		o := newOutputBuffer(ColorModeTrueColor)
+		frame := make([]Cell, width*4)
+		for range 200 {
+			for range rng.IntN(len(frame)/2 + 1) {
+				frame[rng.IntN(len(frame))] = Cell{Rune: 'a' + rng.Int32N(4), Fg: color.RGB{G: uint8(rng.IntN(2))}}
+			}
+			o.flush(frame, width, 4)
+			if !slices.Equal(o.front, frame) {
+				t.Fatalf("width %d: a changed cell went unwritten", width)
+			}
+		}
 	}
 }
 
