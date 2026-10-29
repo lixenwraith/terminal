@@ -45,7 +45,9 @@ behaves as `New`'s Terminal does, the writer goroutine included; `New` is
 The application owns a flat `[]Cell` buffer (row-major, `cells[y*width+x]`) and
 passes it to `Flush`. The output buffer diffs against the previously flushed frame:
 
-- Rows are scanned with early termination (trailing unchanged cells skipped).
+- A row's first and last changed cells are found by memcmp, eight cells a compare:
+  an unchanged row costs those compares alone, and only the cells between are
+  scanned one by one.
 - Cursor moves are emitted only when the write position is non-contiguous.
 - SGR state (fg, bg, attributes) is coalesced across cells; redundant sequences
   are suppressed.

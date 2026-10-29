@@ -76,8 +76,8 @@ func cellEqual(a, b Cell) bool {
 // fails to compile should a field change leave padding behind
 var _ [0]struct{} = [unsafe.Sizeof(Cell{}) - unsafe.Sizeof(rune(0)) - 2*unsafe.Sizeof(color.RGB{}) - unsafe.Sizeof(Attr(0))]struct{}{}
 
-// rowEqual reports whether two rows of cells hold the same cells, as one memcmp
-func rowEqual(a, b []Cell) bool {
+// cellsEqual reports whether two runs of cells hold the same cells, as one memcmp
+func cellsEqual(a, b []Cell) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -86,6 +86,34 @@ func rowEqual(a, b []Cell) bool {
 	}
 	n := len(a) * int(unsafe.Sizeof(Cell{}))
 	return bytes.Equal(unsafe.Slice((*byte)(unsafe.Pointer(&a[0])), n), unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), n))
+}
+
+// diffChunk is the cells one memcmp settles while a row's changes are sought: few
+// enough that a changed chunk costs little to search again cell by cell
+const diffChunk = 8
+
+// firstChange is the first cell where a and b differ, len(a) when none does
+func firstChange(a, b []Cell) int {
+	i := 0
+	for i+diffChunk <= len(a) && cellsEqual(a[i:i+diffChunk], b[i:i+diffChunk]) {
+		i += diffChunk
+	}
+	for i < len(a) && cellEqual(a[i], b[i]) {
+		i++
+	}
+	return i
+}
+
+// lastChange is one past the last cell from on where a and b differ, from when none does
+func lastChange(a, b []Cell, from int) int {
+	j := len(a)
+	for j-diffChunk >= from && cellsEqual(a[j-diffChunk:j], b[j-diffChunk:j]) {
+		j -= diffChunk
+	}
+	for j > from && cellEqual(a[j-1], b[j-1]) {
+		j--
+	}
+	return j
 }
 
 // flush renders the back buffer into buf, diffing against front buffer
@@ -104,20 +132,15 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 
 	for y := 0; y < height; y++ {
 		rowStart := y * width
-		// Most rows of a frame are unchanged; one compare settles each of those
-		if rowEqual(cells[rowStart:rowStart+width], o.front[rowStart:rowStart+width]) {
+		// Memcmp finds the row's first and last changed cells, so an unchanged row is
+		// one pass of compares and a changed one is scanned cell by cell between them
+		row, front := cells[rowStart:rowStart+width], o.front[rowStart:rowStart+width]
+		x := firstChange(row, front)
+		if x == width {
 			continue
 		}
+		rowEnd := lastChange(row, front, x+1)
 
-		rowEnd := width
-		for rowEnd > 0 && cellEqual(cells[rowStart+rowEnd-1], o.front[rowStart+rowEnd-1]) {
-			rowEnd--
-		}
-		if rowEnd == 0 {
-			continue
-		}
-
-		x := 0
 		for x < rowEnd {
 			idx := rowStart + x
 
