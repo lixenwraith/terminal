@@ -55,6 +55,10 @@ passes it to `Flush`. The output buffer diffs against the previously flushed fra
   bytes): a terminal that has the mode (Alacritty 0.13 and later, kitty,
   WezTerm, foot, Ghostty) draws the frame whole, never the rows a read cut it
   at; others ignore it.
+- While the cursor is hidden, a frame that writes hides it again as it starts
+  and ends (12 bytes), so a host that shows it on its own (a console host
+  repainting, a resize) never shows it where the frame's last cell went. A
+  cursor shown with `SetCursorVisible(true)` is left as it is.
 - If the backend size changed between buffer preparation and `Flush`, the frame
   is dropped to prevent resize-race corruption. The next frame (built at the new
   size) renders normally.
