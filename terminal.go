@@ -740,6 +740,9 @@ func EmergencyReset(w io.Writer) {
 		}
 	}
 
+	// A frame the crash cut short would hold back what follows until the terminal times out
+	w.Write(csiSyncEnd)
+
 	// Disable mouse tracking
 	w.Write(csiMouseMotionOff)
 	w.Write(csiMouseDragOff)

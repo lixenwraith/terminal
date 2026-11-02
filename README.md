@@ -51,6 +51,10 @@ passes it to `Flush`. The output buffer diffs against the previously flushed fra
 - Cursor moves are emitted only when the write position is non-contiguous.
 - SGR state (fg, bg, attributes) is coalesced across cells; redundant sequences
   are suppressed.
+- A frame that writes is sent as one synchronized update (DEC mode 2026, 16
+  bytes): a terminal that has the mode (Alacritty 0.13 and later, kitty,
+  WezTerm, foot, Ghostty) draws the frame whole, never the rows a read cut it
+  at; others ignore it.
 - If the backend size changed between buffer preparation and `Flush`, the frame
   is dropped to prevent resize-race corruption. The next frame (built at the new
   size) renders normally.
@@ -245,6 +249,12 @@ A standalone ESC press is disambiguated from escape sequences by a short input-i
 ESC ESC is Alt+Escape alone, Escape before a paste, and Alt with the key that follows otherwise (rxvt's Alt+arrows).
 Partial UTF-8 and escape sequences at read boundaries are reassembled in a persistent buffer.
 With paste mode off, a paste marker is not a paste. A paste whose end marker never arrives ends once input pauses for a second, so what follows a paste that stalls that long arrives as keys.
+
+On Windows the console is read as VT input, so a mouse report arrives only if
+the console host passes the request for reports on to the terminal: Windows
+Terminal's does, and Windows 10's own ConPTY, which Alacritty uses unless a
+`conpty.dll` and `OpenConsole.exe` from Windows Terminal lie beside it, is
+reported not to.
 
 On Unix, a redirected stdin or stdout is replaced by `/dev/tty`, so
 `app > out.toml` and `cmd | app` keep both as data while the application

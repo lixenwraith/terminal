@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -42,8 +43,10 @@ func (b *windowsBackend) Init() error {
 	b.oldInputCP, _ = windows.GetConsoleCP()
 	b.oldOutputCP, _ = windows.GetConsoleOutputCP()
 
-	stdinMode := uint32(windows.ENABLE_MOUSE_INPUT |
-		windows.ENABLE_EXTENDED_FLAGS |
+	// Mouse reports arrive as VT text once asked for; ENABLE_MOUSE_INPUT would add
+	// MOUSE records ReadFile discards, and has a newer ConPTY ask the terminal for
+	// any-event tracking on its own
+	stdinMode := uint32(windows.ENABLE_EXTENDED_FLAGS |
 		windows.ENABLE_VIRTUAL_TERMINAL_INPUT)
 	if err := windows.SetConsoleMode(b.stdin, stdinMode); err != nil {
 		return fmt.Errorf("SetConsoleMode stdin: %w", err)
@@ -131,6 +134,11 @@ func (b *windowsBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
 			// Mirrors unix poll timeout: lets readLoop emit pending standalone ESC
 			return nil, nil
 		}
+		if ok, err := b.keyWaiting(); err != nil {
+			return nil, fmt.Errorf("PeekConsoleInputW: %w", err)
+		} else if !ok {
+			continue
+		}
 
 		var n uint32
 		if err := windows.ReadFile(b.stdin, buf, &n, nil); err != nil {
@@ -145,6 +153,43 @@ func (b *windowsBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
 		copy(ret, buf[:n])
 		return ret, nil
 	}
+}
+
+var (
+	procPeekConsoleInput = windows.NewLazySystemDLL("kernel32.dll").NewProc("PeekConsoleInputW")
+	procReadConsoleInput = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReadConsoleInputW")
+)
+
+// inputRecord is INPUT_RECORD: the event type, then its 16-byte union, which for
+// a KEY_EVENT starts with bKeyDown
+type inputRecord struct {
+	kind uint16
+	_    uint16
+	down uint32
+	_    [12]byte
+}
+
+// keyWaiting takes the records queued ahead of the first key press and reports
+// whether one waits: ReadFile passes over a focus, menu or mouse record or a
+// key's release only to wait for a character, which would hold the reader past
+// the timeout that sends a lone ESC, and past Fini
+func (b *windowsBackend) keyWaiting() (bool, error) {
+	var recs [16]inputRecord
+	var n uint32
+	if r, _, err := procPeekConsoleInput.Call(uintptr(b.stdin), uintptr(unsafe.Pointer(&recs[0])), uintptr(len(recs)), uintptr(unsafe.Pointer(&n))); r == 0 {
+		return false, err
+	}
+	skip := uint32(0)
+	for skip < n && (recs[skip].kind != windows.KEY_EVENT || recs[skip].down == 0) {
+		skip++
+	}
+	if skip > 0 {
+		if r, _, err := procReadConsoleInput.Call(uintptr(b.stdin), uintptr(unsafe.Pointer(&recs[0])), uintptr(skip), uintptr(unsafe.Pointer(&n))); r == 0 {
+			return false, err
+		}
+		return false, nil
+	}
+	return n > 0, nil
 }
 
 func (b *windowsBackend) SetResizeHandler(handler func(int, int)) {

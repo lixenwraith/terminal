@@ -129,6 +129,7 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 
 	w := &o.buf
 	start := w.Len()
+	w.Write(csiSyncBegin)
 
 	for y := 0; y < height; y++ {
 		rowStart := y * width
@@ -218,9 +219,12 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 		}
 	}
 
-	// A frame that changed no cell writes nothing, the reset included
-	if w.Len() > start {
+	// A frame that changed no cell writes nothing, the reset and sync markers included
+	if w.Len() == start+len(csiSyncBegin) {
+		w.Truncate(start)
+	} else {
 		w.Write(csiSGR0)
+		w.Write(csiSyncEnd)
 	}
 	o.lastValid = false
 }

@@ -18,6 +18,7 @@
 // The package uses build tags to separate platform-specific code:
 //
 //   - unix: Native terminal via termios, unix.Poll, SIGWINCH
+//   - windows: Console modes with VT input and output, a polled size
 //   - wasm: Browser terminal via xterm.js JavaScript bridge
 //
 // # Architecture
@@ -25,8 +26,9 @@
 // The Backend interface abstracts platform-specific operations:
 //
 //	Backend (interface)
-//	├── unixBackend  (//go:build unix)  - termios, raw I/O, signals
-//	└── wasmBackend  (//go:build wasm)  - syscall/js, callbacks
+//	├── unixBackend     (//go:build unix)     - termios, raw I/O, signals
+//	├── windowsBackend  (//go:build windows)  - console modes, VT I/O
+//	└── wasmBackend     (//go:build wasm)     - syscall/js, callbacks
 //
 // Shared code (no build tags): Terminal interface, cell diffing, ANSI generation,
 // escape sequence parsing.
@@ -43,7 +45,8 @@
 // # Performance
 //
 // Output uses cell-level diffing. Only changed cells generate ANSI sequences.
-// Style attributes are coalesced to minimize SGR calls. One goroutine writes
+// Style attributes are coalesced to minimize SGR calls, and a frame is one
+// synchronized update (DEC mode 2026). One goroutine writes
 // what is rendered, so a terminal that stops reading never holds the caller:
 // Flush keeps the newest frame until the write in flight returns, and Blocked
 // reports how long it has waited.
