@@ -29,7 +29,7 @@ consoles with VT processing, and browsers via xterm.js (WASM builds).
             ├── inputReader    escape sequence parser, event channel
             └── Backend (interface)
                   ├── unixBackend     //go:build unix — termios, unix.Poll, SIGWINCH, /dev/tty
-                  ├── windowsBackend  //go:build windows — console modes, VT processing
+                  ├── windowsBackend  //go:build windows — console modes, VT processing, CONIN$/CONOUT$
                   └── wasmBackend     //go:build wasm — syscall/js, xterm.js bridge
 
 Shared code carries no build tags: cell diffing, ANSI generation, escape parsing.
@@ -178,6 +178,12 @@ also honours `NO_COLOR`, choosing `ColorModeNone`; a mode passed to `New`
 overrides both, as a `--color=always` or `never` would. `Init` refuses
 `TERM=dumb`, which cannot address the cursor.
 
+On Windows the environment is read the same way where it names the terminal
+(`TERM` or `COLORTERM` set, as mintty, ssh and Alacritty do). A native console
+names none, and draws 24-bit color from Windows 10 1703 (build 15063) on, so
+it gets true color; an older build gets 256. A console without VT processing
+(conhost's legacy console) is refused at `Init`, which says so.
+
 `Init` and `Sync` clear the screen to the terminal's own background.
 `EmergencyReset(os.Stdout)` writes to the controlling terminal when stdout is
 redirected, so the reset never lands in the program's output.
@@ -260,9 +266,14 @@ Terminal's does, and Windows 10's own ConPTY, which Alacritty uses unless a
 `conpty.dll` and `OpenConsole.exe` from Windows Terminal lie beside it, is
 reported not to.
 
-On Unix, a redirected stdin or stdout is replaced by `/dev/tty`, so
-`app > out.toml` and `cmd | app` keep both as data while the application
-draws and reads keys on the terminal.
+A redirected stdin or stdout is replaced by the terminal itself, `/dev/tty`
+on Unix and `CONIN$` or `CONOUT$` on Windows, so `app > out.toml` and
+`cmd | app` keep both as data while the application draws and reads keys on
+the terminal. Windows needs one of stdin, stdout and stderr left on the
+console to know it is the one the player sees: with all three redirected
+(mintty without ConPTY) the process's console is a hidden one, and `Init`
+refuses it. A resize on Windows arrives with the console's size record, and a
+poll every 100 ms catches a record a read took past.
 `PostEvent` injects synthetic events (used for clean shutdown of blocked `PollEvent`).
 
 ### Key releases
