@@ -64,6 +64,10 @@ func (f *fakeBackend) written() string {
 	return f.out.String()
 }
 
+// synced is what a frame writing s sends: s, then a reset, as one synchronized
+// update, which a terminal that has the mode shows whole
+func synced(s string) string { return "\x1b[?2026h" + s + "\x1b[0m\x1b[?2026l" }
+
 // Each color mode writes each kind of color as such a terminal reads it:
 // 16 colors as SGR 30-37/90-97 and 40-47/100-107, restated from a reset
 // since a console's bright colors set bold, a palette index by its shade,
@@ -88,7 +92,7 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 	} {
 		o := newOutputBuffer(c.mode)
 		o.flush(c.cells, len(c.cells), 1)
-		if got, want := o.buf.String(), "\x1b[1;1H"+c.want+"\x1b[0m"; got != want {
+		if got, want := o.buf.String(), synced("\x1b[1;1H"+c.want); got != want {
 			t.Errorf("mode %d %+v: %q, want %q", c.mode, c.cells, got, want)
 		}
 	}
@@ -101,7 +105,7 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 func TestCellsSendNoControlCharacters(t *testing.T) {
 	o := newOutputBuffer(ColorMode256)
 	o.flush([]Cell{{Rune: 0x1b}, {Rune: 0x9b}, {Rune: 0x7f}, {Rune: -229}, {Rune: 0xd800}, {Rune: 0x202e}, {Rune: 0x2067}, {Rune: 0x061c}, {Rune: 0x200b}, {Rune: 0x2028}, {Rune: 'é'}}, 11, 1)
-	if got, want := o.buf.String(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m          é\x1b[0m"; got != want {
+	if got, want := o.buf.String(), synced("\x1b[1;1H\x1b[0;38;5;16;48;5;16m          é"); got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }
@@ -117,7 +121,7 @@ func TestEachCellIsOneColumn(t *testing.T) {
 		row = append(row, Cell{Rune: r})
 	}
 	o.flush(row, len(row), 1)
-	if got, want := o.buf.String(), "\x1b[1;1H\x1b[0;38;5;16;48;5;16m"+strings.Repeat("\ufffd", 10)+"é─❤\x1b[0m"; got != want {
+	if got, want := o.buf.String(), synced("\x1b[1;1H\x1b[0;38;5;16;48;5;16m"+strings.Repeat("\ufffd", 10)+"é─❤"); got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }

@@ -43,7 +43,8 @@
 // # Performance
 //
 // Output uses cell-level diffing. Only changed cells generate ANSI sequences.
-// Style attributes are coalesced to minimize SGR calls. One goroutine writes
+// Style attributes are coalesced to minimize SGR calls, and a frame is one
+// synchronized update (DEC mode 2026). One goroutine writes
 // what is rendered, so a terminal that stops reading never holds the caller:
 // Flush keeps the newest frame until the write in flight returns, and Blocked
 // reports how long it has waited.

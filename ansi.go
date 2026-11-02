@@ -21,6 +21,11 @@ var (
 	// reordering (ECMA-48 BDSM, mode 8), so right-to-left text keeps its cells
 	csiAltScreenEnter = []byte("\x1b[?1049h\x1b[8l")
 	csiAltScreenExit  = []byte("\x1b[?1049l\x1b[8h")
+	// Synchronized output (DEC mode 2026): a terminal that has it shows what lies
+	// between the two at once, so it never draws half a frame; others ignore both
+	csiSyncBegin = []byte("\x1b[?2026h")
+	csiSyncEnd   = []byte("\x1b[?2026l")
+
 	// DECAWM: Auto-Wrap Mode
 	// ?7l disables wrapping (cursor sticks at right edge), preventing scroll when writing to bottom-right corner
 	csiAutoWrapOn  = []byte("\x1b[?7h")
