@@ -22,6 +22,7 @@ type outputBuffer struct {
 	cursorX     int
 	cursorY     int
 	cursorValid bool
+	cursorShown bool // the caller shows the cursor; a frame leaves it as it is
 
 	// Style state for coalescing
 	lastFg    color.RGB
@@ -130,6 +131,12 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	w := &o.buf
 	start := w.Len()
 	w.Write(csiSyncBegin)
+	// A host that shows the cursor on its own (a console host repainting, a resize)
+	// would show it where the last cell went: a hidden one is hidden again at each end
+	if !o.cursorShown {
+		w.Write(csiCursorHide)
+	}
+	body := w.Len()
 
 	for y := 0; y < height; y++ {
 		rowStart := y * width
@@ -219,11 +226,14 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 		}
 	}
 
-	// A frame that changed no cell writes nothing, the reset and sync markers included
-	if w.Len() == start+len(csiSyncBegin) {
+	// A frame that changed no cell writes nothing, the reset and markers included
+	if w.Len() == body {
 		w.Truncate(start)
 	} else {
 		w.Write(csiSGR0)
+		if !o.cursorShown {
+			w.Write(csiCursorHide)
+		}
 		w.Write(csiSyncEnd)
 	}
 	o.lastValid = false

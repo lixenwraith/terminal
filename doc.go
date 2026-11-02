@@ -9,8 +9,9 @@
 //   - Key releases on request, from the Linux or FreeBSD console's keyboard
 //     or the terminal's key event protocol (Alacritty's), and presses where
 //     there are neither
-//   - Drawing on /dev/tty when stdin or stdout is redirected (Unix)
-//   - Resize detection (SIGWINCH on Unix, callback on WASM)
+//   - Drawing on the terminal itself when stdin or stdout is redirected
+//     (/dev/tty on Unix, CONIN$ and CONOUT$ on Windows)
+//   - Resize detection (SIGWINCH on Unix, size records on Windows, callback on WASM)
 //   - Clean terminal restoration on exit/panic
 //
 // # Platform Support
@@ -18,7 +19,7 @@
 // The package uses build tags to separate platform-specific code:
 //
 //   - unix: Native terminal via termios, unix.Poll, SIGWINCH
-//   - windows: Console modes with VT input and output, a polled size
+//   - windows: Console modes with VT input and output, size records
 //   - wasm: Browser terminal via xterm.js JavaScript bridge
 //
 // # Architecture

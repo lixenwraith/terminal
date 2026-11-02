@@ -424,6 +424,7 @@ func (t *termImpl) SetCursorVisible(visible bool) {
 	}
 
 	t.releaseLocked()
+	t.output.cursorShown = visible
 	w := &t.output.buf
 	if visible {
 		w.Write(csiCursorShow)

@@ -1,4 +1,4 @@
-//go:build !wasm
+//go:build !wasm && !windows
 
 package terminal
 

@@ -64,9 +64,11 @@ func (f *fakeBackend) written() string {
 	return f.out.String()
 }
 
-// synced is what a frame writing s sends: s, then a reset, as one synchronized
-// update, which a terminal that has the mode shows whole
-func synced(s string) string { return "\x1b[?2026h" + s + "\x1b[0m\x1b[?2026l" }
+// synced is what a frame writing s sends with the cursor hidden: s, then a reset,
+// as one synchronized update that hides the cursor again as it starts and ends
+func synced(s string) string {
+	return "\x1b[?2026h\x1b[?25l" + s + "\x1b[0m\x1b[?25l\x1b[?2026l"
+}
 
 // Each color mode writes each kind of color as such a terminal reads it:
 // 16 colors as SGR 30-37/90-97 and 40-47/100-107, restated from a reset
@@ -526,6 +528,22 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// A cursor the caller shows stays shown through the frames that follow
+func TestAShownCursorStaysShown(t *testing.T) {
+	f := &fakeBackend{}
+	term := NewWithBackend(f, ColorMode256)
+	if err := term.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer term.Fini()
+	term.SetCursorVisible(true)
+	term.Flush([]Cell{{Rune: 'x'}}, 1, 1)
+	waitFor(t, "the frame to reach the backend", func() bool { return strings.Contains(f.written(), "x") })
+	if _, after, _ := strings.Cut(f.written(), "\x1b[?25h"); strings.Contains(after, "\x1b[?25l") {
+		t.Fatalf("a frame hid the shown cursor: %q", after)
 	}
 }
 
