@@ -147,6 +147,7 @@ func (r *inputReader) stop() {
 	r.mu.Unlock()
 
 	close(r.stopCh)
+	r.backend.Wake()
 	// Wait with timeout - don't block forever if read is stuck
 	select {
 	case <-r.doneCh:
@@ -177,9 +178,15 @@ func (r *inputReader) readLoop() {
 
 	for {
 		r.serviceKeys()
+		select {
+		case <-r.stopCh:
+			r.end()
+			r.sendEvent(Event{Type: EventClosed})
+			return
+		default:
+		}
 
-		// Blocking read from backend
-		data, err := r.backend.Read(r.stopCh)
+		data, err := r.backend.Read(r.wait())
 		if err != nil {
 			r.end()
 			r.sendEvent(Event{Type: EventError, Err: err})
@@ -188,18 +195,11 @@ func (r *inputReader) readLoop() {
 
 		if r.source == KeySourceConsole {
 			r.consoleRead(data)
-			select {
-			case <-r.stopCh:
-				r.end()
-				r.sendEvent(Event{Type: EventClosed})
-				return
-			default:
-				continue
-			}
+			continue
 		}
 
 		// A paste whose end marker never comes ends when input pauses, so
-		// keys are never swallowed for good; a read may block (wasm)
+		// keys are never swallowed for good
 		if r.pasting && time.Since(r.pasteSeen) > pasteIdle {
 			r.paste = append(r.paste, r.buf...)
 			r.buf = r.buf[:0]
@@ -207,20 +207,13 @@ func (r *inputReader) readLoop() {
 		}
 
 		if len(data) == 0 {
-			// Timeout (Unix poll) or empty read: a pending ESC, or two, was
-			// pressed alone; inside a paste it is text
+			// The wait passed: a pending ESC, or two, was pressed alone;
+			// inside a paste it is text
 			if ev, ok := loneEscape[string(r.buf)]; ok && !r.pasting {
 				r.sendKey(0, ev)
 				r.buf = r.buf[:0]
 			}
-			select {
-			case <-r.stopCh:
-				r.end()
-				r.sendEvent(Event{Type: EventClosed})
-				return
-			default:
-				continue
-			}
+			continue
 		}
 
 		// Append to persistent buffer
@@ -239,6 +232,34 @@ func (r *inputReader) readLoop() {
 			}
 		}
 	}
+}
+
+// escapeWait is how long input may pause after an ESC before it was Escape
+// alone, and how often a console with keys held is asked whether it still has
+// the keyboard
+const escapeWait = 10 * time.Millisecond
+
+// wait is how long the next read may wait for input, negative for no limit, so
+// an idle reader takes no wakeups: a lone ESC, a paste, an exchange with the
+// terminal, or keys held on a console each bound it
+func (r *inputReader) wait() time.Duration {
+	w := time.Duration(-1)
+	switch _, esc := loneEscape[string(r.buf)]; {
+	case r.source == KeySourceConsole:
+		if len(r.holds.held) > 0 {
+			w = escapeWait
+		}
+	case r.pasting:
+		w = max(pasteIdle-time.Since(r.pasteSeen), 0)
+	case esc:
+		w = escapeWait
+	}
+	if r.exchange != exchangeNone {
+		if d := max(time.Until(r.deadline), 0); w < 0 || d < w {
+			w = d
+		}
+	}
+	return w
 }
 
 // end releases what is held as input ends, and the console's keyboard

@@ -90,4 +90,3 @@ func (r Region) MeasureKeyValueWrap(key, value string) int {
 	_, valW := keyValueSplit(r.W, RuneLen(key), RuneLen(value))
 	return max(len(WrapText(value, valW)), 1)
 }
-

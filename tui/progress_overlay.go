@@ -464,4 +464,3 @@ func (p *ProgressState) Dismiss() {
 func (p *ProgressState) Show() {
 	p.Visible = true
 }
-

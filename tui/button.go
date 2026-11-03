@@ -128,4 +128,3 @@ func (r Region) ButtonBar(y int, buttons []Button, opts ButtonBarOpts) {
 		}
 	}
 }
-

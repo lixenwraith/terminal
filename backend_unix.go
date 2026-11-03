@@ -5,9 +5,12 @@ package terminal
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
@@ -21,12 +24,15 @@ type unixBackend struct {
 	tty     *os.File // the controlling terminal, opened for a redirected end
 	oldTerm *term.State
 	console keyConsole // the console input comes from, nil off one
+	buf     [256]byte  // what Read returns, valid until the next Read
+
+	// The pipe Wake writes to and Read polls beside the input, -1 while closed
+	wakeMu sync.Mutex
+	wake   [2]int
 
 	resizeStopCh chan struct{}
 	resizeDoneCh chan struct{}
 }
-
-const escapeTimeoutMs = 10
 
 func newBackend() Backend {
 	return &unixBackend{
@@ -34,6 +40,7 @@ func newBackend() Backend {
 		out:   os.Stdout,
 		inFd:  int(os.Stdin.Fd()),
 		outFd: int(os.Stdout.Fd()),
+		wake:  [2]int{-1, -1},
 	}
 }
 
@@ -57,9 +64,14 @@ func (b *unixBackend) Init() error {
 		}
 	}
 
+	if err := b.openWake(); err != nil {
+		b.closeTTY()
+		return err
+	}
 	cooked, _ := unix.IoctlGetTermios(b.inFd, tcgets)
 	old, err := term.MakeRaw(b.inFd)
 	if err != nil {
+		b.closeWake()
 		b.closeTTY()
 		return err
 	}
@@ -89,7 +101,53 @@ func (b *unixBackend) Fini() {
 	if b.oldTerm != nil {
 		term.Restore(b.inFd, b.oldTerm)
 	}
+	b.closeWake()
 	b.closeTTY()
+}
+
+// openWake makes the wake pipe, both ends non-blocking and closed on exec
+func (b *unixBackend) openWake() error {
+	var p [2]int
+	syscall.ForkLock.RLock()
+	err := unix.Pipe(p[:])
+	if err == nil {
+		unix.CloseOnExec(p[0])
+		unix.CloseOnExec(p[1])
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		return fmt.Errorf("wake pipe: %w", err)
+	}
+	for _, fd := range p {
+		if err = unix.SetNonblock(fd, true); err != nil {
+			unix.Close(p[0])
+			unix.Close(p[1])
+			return fmt.Errorf("wake pipe: %w", err)
+		}
+	}
+	b.wakeMu.Lock()
+	b.wake = p
+	b.wakeMu.Unlock()
+	return nil
+}
+
+func (b *unixBackend) closeWake() {
+	b.wakeMu.Lock()
+	defer b.wakeMu.Unlock()
+	if b.wake[0] >= 0 {
+		unix.Close(b.wake[0])
+		unix.Close(b.wake[1])
+		b.wake = [2]int{-1, -1}
+	}
+}
+
+// Wake writes to the wake pipe; one already full holds a wake that is pending
+func (b *unixBackend) Wake() {
+	b.wakeMu.Lock()
+	defer b.wakeMu.Unlock()
+	if b.wake[1] >= 0 {
+		unix.Write(b.wake[1], []byte{0})
+	}
 }
 
 // Size delegates to exported WindowSize; getTerminalSize deleted
@@ -115,55 +173,46 @@ func (b *unixBackend) Write(p []byte) error {
 	return err
 }
 
-// Read implements the polling logic previously in input.go
-func (b *unixBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
-	// Buffer for single read
-	buf := make([]byte, 256)
-
+// Read polls the input beside the wake pipe, so a read with no limit waits on
+// the terminal without a wakeup until input or Wake
+func (b *unixBackend) Read(wait time.Duration) ([]byte, error) {
+	b.wakeMu.Lock()
+	fds := []unix.PollFd{{Fd: int32(b.inFd), Events: unix.POLLIN}, {Fd: int32(b.wake[0]), Events: unix.POLLIN}}
+	b.wakeMu.Unlock()
+	deadline := time.Now().Add(wait)
 	for {
-		select {
-		case <-stopCh:
-			return nil, nil
-		default:
+		ms := -1
+		if wait >= 0 {
+			ms = int(max(time.Until(deadline)+time.Millisecond-1, 0) / time.Millisecond)
 		}
-
-		// Poll with timeout to allow checking stopCh
-		fds := []unix.PollFd{
-			{Fd: int32(b.inFd), Events: unix.POLLIN},
-		}
-
-		// Timeout to differentiate standalone ESC from escape sequences
-		n, err := unix.Poll(fds, escapeTimeoutMs)
+		n, err := unix.Poll(fds, ms)
 		if err != nil {
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
 			return nil, err
 		}
-
 		if n == 0 {
-			// Timeout - return empty to let readLoop handle pending ESC
+			return nil, nil
+		}
+		if fds[1].Revents != 0 {
+			var drain [64]byte
+			for n, _ := unix.Read(int(fds[1].Fd), drain[:]); n == len(drain); n, _ = unix.Read(int(fds[1].Fd), drain[:]) {
+			}
 			return nil, nil
 		}
 
-		// Read data
-		rn, err := unix.Read(b.inFd, buf)
+		rn, err := unix.Read(b.inFd, b.buf[:])
 		if err != nil {
 			if errors.Is(err, unix.EINTR) || errors.Is(err, unix.EAGAIN) {
 				continue
 			}
 			return nil, err
 		}
-
 		if rn == 0 {
-			// EOF
-			return nil, nil
+			return nil, io.EOF // the terminal hung up
 		}
-
-		// Return copy of data
-		ret := make([]byte, rn)
-		copy(ret, buf[:rn])
-		return ret, nil
+		return b.buf[:rn], nil
 	}
 }
 

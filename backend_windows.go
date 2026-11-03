@@ -7,13 +7,15 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-const escapeTimeoutMs = 10
+// pollWait is how often a read checks for Wake while it waits on the console
+const pollWait = 10 * time.Millisecond
 
 type windowsBackend struct {
 	stdin  windows.Handle
@@ -30,6 +32,8 @@ type windowsBackend struct {
 	sizeMu sync.Mutex
 	resize func(int, int)
 	w, h   int
+
+	woken atomic.Bool // Wake was called since a read last returned for it
 
 	resizeStopCh chan struct{}
 	resizeDoneCh chan struct{}
@@ -176,22 +180,30 @@ func (b *windowsBackend) Write(p []byte) error {
 	return windows.WriteFile(b.stdout, p, &written, nil)
 }
 
-func (b *windowsBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
+// Read waits on the console a poll at a time, for Wake and wait to end it, and
+// returns only with input, a Wake, or wait passed
+func (b *windowsBackend) Read(wait time.Duration) ([]byte, error) {
 	buf := make([]byte, 256)
+	deadline := time.Now().Add(wait)
 	for {
-		select {
-		case <-stopCh:
+		if b.woken.Swap(false) {
 			return nil, nil
-		default:
+		}
+		step := pollWait
+		if wait >= 0 {
+			left := time.Until(deadline)
+			if left <= 0 {
+				return nil, nil
+			}
+			step = min(step, left+time.Millisecond-1)
 		}
 
-		ev, err := windows.WaitForSingleObject(b.stdin, uint32(escapeTimeoutMs))
+		ev, err := windows.WaitForSingleObject(b.stdin, uint32(step/time.Millisecond))
 		if err != nil {
 			return nil, fmt.Errorf("WaitForSingleObject: %w", err)
 		}
 		if ev == uint32(windows.WAIT_TIMEOUT) {
-			// Mirrors unix poll timeout: lets readLoop emit pending standalone ESC
-			return nil, nil
+			continue
 		}
 		if ok, err := b.keyWaiting(); err != nil {
 			return nil, fmt.Errorf("PeekConsoleInputW: %w", err)
@@ -205,14 +217,13 @@ func (b *windowsBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
 		}
 		if n == 0 {
 			// VTP consumed a non-keyboard record (e.g. focus event) producing no bytes
-			return nil, nil
+			continue
 		}
-
-		ret := make([]byte, n)
-		copy(ret, buf[:n])
-		return ret, nil
+		return buf[:n], nil
 	}
 }
+
+func (b *windowsBackend) Wake() { b.woken.Store(true) }
 
 var (
 	procPeekConsoleInput = windows.NewLazySystemDLL("kernel32.dll").NewProc("PeekConsoleInputW")

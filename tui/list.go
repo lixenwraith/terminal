@@ -100,4 +100,3 @@ func (r Region) List(items []ListItem, cursor, scroll int, opts ListOpts) int {
 
 	return rendered
 }
-

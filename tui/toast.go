@@ -302,4 +302,3 @@ func (t *ToastState) Show(opts ToastOpts, frames int) {
 	t.FramesLeft = frames
 	t.Visible = true
 }
-

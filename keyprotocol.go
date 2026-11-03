@@ -78,6 +78,7 @@ func (r *inputReader) askKeys(report KeyReport, allow KeySource) {
 	for {
 		select {
 		case r.asks <- a:
+			r.backend.Wake() // a reader waiting on input takes the ask now
 			return
 		default:
 		}

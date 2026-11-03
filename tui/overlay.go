@@ -374,4 +374,3 @@ func (o *OverlayState) Hide() {
 func (o *OverlayState) Toggle() {
 	o.Visible = !o.Visible
 }
-

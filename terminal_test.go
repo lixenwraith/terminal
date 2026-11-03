@@ -11,18 +11,22 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/lixenwraith/color"
 )
 
-// fakeBackend records output and replays input chunks; an empty chunk, or
-// none left, is a poll timing out, and pause blocks a read as wasm's does
+// fakeBackend records output and the waits it is read with, and replays input
+// chunks; an empty chunk, or none left, is a wait passing, and pause holds a
+// read that has input back
 type fakeBackend struct {
 	mu     sync.Mutex
 	out    bytes.Buffer
 	chunks []string
+	waits  []time.Duration
 	pause  time.Duration
 	gate   chan struct{} // when set, a write waits until it is closed
+	woken  chan struct{}
 }
 
 func (f *fakeBackend) Init() error                              { return nil }
@@ -40,24 +44,42 @@ func (f *fakeBackend) Write(p []byte) error {
 	return nil
 }
 
-func (f *fakeBackend) Read(stop <-chan struct{}) ([]byte, error) {
+func (f *fakeBackend) Read(wait time.Duration) ([]byte, error) {
 	f.mu.Lock()
+	f.waits = append(f.waits, wait)
+	if f.woken == nil {
+		f.woken = make(chan struct{}, 1)
+	}
+	woken := f.woken
 	if len(f.chunks) > 0 {
 		c := f.chunks[0]
 		f.chunks = f.chunks[1:]
 		f.mu.Unlock()
 		if c == "" {
-			time.Sleep(5 * time.Millisecond) // a poll timing out
+			time.Sleep(5 * time.Millisecond) // a wait passing
 		}
 		time.Sleep(f.pause)
 		return []byte(c), nil
 	}
 	f.mu.Unlock()
 	select {
-	case <-stop:
+	case <-woken:
 	case <-time.After(5 * time.Millisecond):
 	}
 	return nil, nil
+}
+
+func (f *fakeBackend) Wake() {
+	f.mu.Lock()
+	if f.woken == nil {
+		f.woken = make(chan struct{}, 1)
+	}
+	woken := f.woken
+	f.mu.Unlock()
+	select {
+	case woken <- struct{}{}:
+	default:
+	}
 }
 
 func (f *fakeBackend) written() string {
@@ -72,10 +94,10 @@ func synced(s string) string {
 	return "\x1b[?2026h\x1b[?25l" + s + "\x1b[0m\x1b[?25l\x1b[?2026l"
 }
 
-// Each color mode writes each kind of color as such a terminal reads it:
-// 16 colors as SGR 30-37/90-97 and 40-47/100-107, restated from a reset
-// since a console's bright colors set bold, a palette index by its shade,
-// the terminal's own as 39/49 in every mode, no color at all in
+// Each color mode writes each kind of color as such a terminal reads it: 16
+// colors as SGR 30-37/90-97 and 40-47/100-107, restated from a reset since a
+// console's bright colors set bold, and a palette index below 16 by those codes
+// in every mode but under bold below 8; the terminal's own as 39/49, no color in
 // ColorModeNone, and elsewhere only what changed from one cell to the next
 func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 	red, yellow := color.RGB{R: 205}, color.RGB{R: 255, G: 255}
@@ -90,7 +112,9 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 		{ColorMode16, []Cell{{Rune: 'x', Fg: color.RGB{R: 9}, Attrs: AttrFg256}, {Rune: 'y', Fg: color.RGB{R: 1}, Attrs: AttrFg256}}, "\x1b[0;91;40mx\x1b[0;31;40my"},
 		{ColorMode256, []Cell{{Rune: 'x', Attrs: AttrFgDefault | AttrBgDefault}}, "\x1b[0;39;49mx"},
 		{ColorMode256, []Cell{{Rune: 'x', Fg: color.RGB{R: 1}, Attrs: AttrFg256}, {Rune: 'y', Fg: color.RGB{R: 1}, Bg: color.RGB{R: 2}, Attrs: AttrFg256 | AttrBg256},
-			{Rune: 'z', Fg: color.RGB{R: 3}, Bg: color.RGB{R: 4}, Attrs: AttrFg256 | AttrBg256}}, "\x1b[0;38;5;1;48;5;16mx\x1b[48;5;2my\x1b[38;5;3;48;5;4mz"},
+			{Rune: 'z', Fg: color.RGB{R: 3}, Bg: color.RGB{R: 4}, Attrs: AttrFg256 | AttrBg256}}, "\x1b[0;31;48;5;16mx\x1b[42my\x1b[33;44mz"},
+		{ColorMode256, []Cell{{Rune: 'x', Fg: color.RGB{R: 1}, Bg: color.RGB{R: 12}, Attrs: AttrFg256 | AttrBg256 | AttrBold},
+			{Rune: 'y', Fg: color.RGB{R: 9}, Bg: color.RGB{R: 196}, Attrs: AttrFg256 | AttrBg256 | AttrBold}}, "\x1b[0;1;38;5;1;104mx\x1b[91;48;5;196my"},
 		{ColorModeTrueColor, []Cell{{Rune: 'x', Fg: color.RGB{R: 1, G: 2, B: 3}, Attrs: AttrBgDefault}}, "\x1b[0;38;2;1;2;3;49mx"},
 		{ColorModeNone, []Cell{{Rune: 'x', Fg: red, Bg: yellow, Attrs: AttrFg256 | AttrUnderline}, {Rune: 'y', Fg: yellow, Attrs: AttrUnderline}}, "\x1b[0;4mxy"},
 	} {
@@ -165,6 +189,42 @@ func TestEveryChangedCellIsWritten(t *testing.T) {
 	}
 }
 
+// ChangedCells marks exactly the cells where two runs differ, whichever of a
+// cell's twelve bytes differs, at any length and offset, in the kernel the build
+// selected: plain Go, or with GOEXPERIMENT=simd, AVX2, NEON or wasm SIMD128
+func FuzzChangedCells(f *testing.F) {
+	for _, n := range []uint16{0, 1, 3, 4, 7, 8, 9, 63, 64, 65, 127, 128, 200, 333} {
+		f.Add(n, uint64(n)*0x9e3779b97f4a7c15, uint8(n%5))
+	}
+	f.Fuzz(func(t *testing.T, size uint16, seed uint64, skip uint8) {
+		n := int(size % 400)
+		rng := rand.New(rand.NewPCG(seed, uint64(size)))
+		a := make([]Cell, n+int(skip%5))
+		for i := range a {
+			a[i] = Cell{Rune: rng.Int32(), Fg: color.RGB{R: uint8(rng.Uint32()), G: uint8(rng.Uint32()), B: uint8(rng.Uint32())},
+				Bg: color.RGB{R: uint8(rng.Uint32()), G: uint8(rng.Uint32()), B: uint8(rng.Uint32())}, Attrs: Attr(rng.Uint32())}
+		}
+		b := slices.Clone(a)
+		if n > 0 {
+			for range rng.IntN(n/2 + 2) {
+				i := rng.IntN(len(b))
+				cell := (*[12]byte)(unsafe.Pointer(&b[i]))
+				cell[rng.IntN(12)] ^= 1 << rng.IntN(8)
+			}
+		}
+		a, b = a[skip%5:], b[skip%5:] // a run starting past a block's first cell
+		m := ChangedCells(make([]uint64, 1), a, b)
+		if len(m) != (len(a)+63)/64 {
+			t.Fatalf("%d cells: %d words", len(a), len(m))
+		}
+		for i := range 64 * len(m) {
+			if got, want := m[i>>6]>>(i&63)&1 == 1, i < len(a) && a[i] != b[i]; got != want {
+				t.Fatalf("%d cells: cell %d marked %v", len(a), i, got)
+			}
+		}
+	})
+}
+
 // vt is a terminal as far as a true color frame drives one: cursor moves, SGR
 // and runes, the cursor held at the right edge as auto-wrap off holds it
 type vt struct {
@@ -231,6 +291,71 @@ func TestPasteArrivesWhole(t *testing.T) {
 		"blocking": {idle: 20 * time.Millisecond, pause: 40 * time.Millisecond, chunks: []string{"\x1b[200~ab", "q"}, want: []Event{paste("ab"), key('q')}},
 		"mode off": {off: true, chunks: []string{"\x1b[200~q"}, want: []Event{key('q')}},
 	})
+}
+
+// stepBackend hands the reader the chunks a test sends, one a read, a nil one
+// a wait passing, and tells the test the wait each read was given
+type stepBackend struct {
+	fakeBackend
+	in    chan []byte
+	waits chan time.Duration
+}
+
+func newStepBackend() *stepBackend {
+	s := &stepBackend{in: make(chan []byte), waits: make(chan time.Duration, 1)}
+	s.woken = make(chan struct{}, 1)
+	return s
+}
+
+func (s *stepBackend) Read(wait time.Duration) ([]byte, error) {
+	s.waits <- wait
+	select {
+	case c := <-s.in:
+		return c, nil
+	case <-s.woken:
+		return nil, nil
+	}
+}
+
+// A reader with nothing pending waits on input with no limit, so a terminal
+// nobody types at costs no wakeups. A lone ESC, a paste and an exchange with the
+// terminal bound the wait by what is left of theirs; an ask wakes it, and stopping
+// ends it.
+func TestAReaderWaitsOnlyForWhatIsPending(t *testing.T) {
+	s := newStepBackend()
+	r := newInputReader(s)
+	r.pasteMode.Store(true)
+	r.sources, r.write = KeySourceProtocol, func([]byte, bool) bool { return true }
+	r.start()
+	next := func(what string, ok func(time.Duration) bool) {
+		t.Helper()
+		select {
+		case w := <-s.waits:
+			if !ok(w) {
+				t.Fatalf("%s: read waits %v", what, w)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: no read", what)
+		}
+	}
+	unbounded := func(w time.Duration) bool { return w < 0 }
+	next("idle", unbounded)
+	s.in <- []byte("\x1b")
+	next("ESC", func(w time.Duration) bool { return w == escapeWait })
+	s.in <- nil
+	next("Escape sent", unbounded)
+	s.in <- []byte("\x1b[200~ab")
+	next("pasting", func(w time.Duration) bool { return w > 0 && w <= pasteIdle })
+	s.in <- []byte("\x1b[201~")
+	next("pasted", unbounded)
+	r.askKeys(KeyReportReleases, KeySourceProtocol)
+	next("ask taken", func(w time.Duration) bool { return w > protoTimeout/2 && w <= protoTimeout })
+	r.stop()
+	select {
+	case <-r.doneCh:
+	default:
+		t.Fatal("stopping left the reader waiting")
+	}
 }
 
 // ESC ESC is Escape before a paste, in one read or split after the second

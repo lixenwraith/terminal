@@ -182,4 +182,3 @@ func (r Region) renderTableRow(y int, cells []string, widths []int, aligns []Ali
 		}
 	}
 }
-

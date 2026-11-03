@@ -38,16 +38,19 @@ Platform specifics are isolated in the `Backend` implementations.
 `NewWithBackend(b, mode)` builds a Terminal over a `Backend` of the caller's
 own: a pipe, an in-process emulator or a test standing in for the tty. It
 behaves as `New`'s Terminal does, the writer goroutine included; `New` is
-`NewWithBackend` over the platform's backend and the detected color mode.
+`NewWithBackend` over the platform's backend and the detected color mode. Its
+`Read` waits as long as the reader allows, without limit when nothing is
+pending, and `Wake` ends that wait for a stop or a key report ask.
 
 ### Rendering pipeline
 
 The application owns a flat `[]Cell` buffer (row-major, `cells[y*width+x]`) and
 passes it to `Flush`. The output buffer diffs against the previously flushed frame:
 
-- A row's first and last changed cells are found by memcmp, 32 cells a compare:
-  an unchanged row costs those compares alone. Between them a cell compares as
-  three words, and a run of more than three unchanged cells is skipped by memcmp.
+- A row's changed cells come as a bitmap from `ChangedCells`: a block of 64
+  cells, then of 16, that one memcmp finds unchanged costs that compare alone,
+  and a cell compares as three words. The cells between the first and last set
+  bits are drawn, a run of more than three unchanged ones moved over.
 - Cursor moves are emitted only when the write position is non-contiguous.
 - SGR state (fg, bg, attributes) is coalesced across cells: a cell in the style
   of the cell before it costs one compare, and redundant sequences are suppressed.
@@ -83,6 +86,23 @@ restoring sequences, then restores the termios without them.
 Auto-wrap and, where the terminal follows ECMA-48 mode 8 (VTE), its own bidi
 reordering are off during the session: the bottom-right cell is writable
 without scroll side effects, and right-to-left text stays in its cells.
+
+### Changed cells and SIMD
+
+`ChangedCells(dst, a, b)` is the diff `Flush` runs on each row, exported for a
+renderer that draws cells itself (a canvas, a texture, a framebuffer): bit
+`i&63` of word `i>>6` is set where `a[i]` and `b[i]` differ, in `dst`'s storage.
+
+Built with `GOEXPERIMENT=simd` (Go 1.27), it compares cells as vectors through
+`simd/archsimd`: AVX2 on amd64 where the CPU has it, NEON on arm64, SIMD128 in
+wasm, whose module then needs a browser with WebAssembly SIMD (every current
+one). Other targets, and builds without the experiment, compare in plain Go;
+the bits, and the bytes `Flush` writes, are the same either way.
+
+The experiment is Go's and outside the Go 1 promise: a toolchain that changes
+`simd/archsimd` can stop this build until the package follows, and on amd64 it
+also moves the runtime's map hashing onto archsimd. Built without it, nothing
+in the package changes.
 
 ## Quick start
 
@@ -153,7 +173,10 @@ colors:
 - With `AttrFg256` / `AttrBg256` set, `Fg.R` / `Bg.R` holds an xterm-256
   palette index directly and `G`/`B` are ignored. This allows exact palette
   output on true color terminals and skips RGB → palette conversion. Indices
-  0-15 are the ANSI 16, which every terminal shows in its own theme's shades.
+  0-15 are the ANSI 16, which every terminal shows in its own theme's shades,
+  and go out as `30-37`/`90-97` and `40-47`/`100-107`, 4 to 5 bytes shorter
+  than `38;5;N`; a bold foreground below 8 keeps `38;5;N`, which a terminal
+  drawing bold as bright may not brighten as it does `30-37`.
 - With `AttrFgDefault` / `AttrBgDefault` set, the color is the terminal's own
   (SGR 39/49), whatever `Fg` / `Bg` hold: an application keeps a light or
   dark terminal's background without knowing which it is.
@@ -255,7 +278,8 @@ division approximation; `SoftLight` uses init-time LUTs replacing `math.Sqrt`.
 - `EventFocus` — `Focused`, while releases come through the terminal's protocol
 - `EventError`, `EventClosed`
 
-A standalone ESC press is disambiguated from escape sequences by a short input-idle timeout (one ~10ms poll cycle).
+A standalone ESC press is told from an escape sequence by input pausing 10 ms after it.
+Otherwise the reader waits on input with no limit, so an idle terminal takes no wakeups: on Unix the read polls the terminal beside a pipe that `Wake` writes to, and only a lone ESC, a paste, a key protocol exchange or keys held on a console bound the wait. Windows still checks every 10 ms inside its read.
 ESC ESC is Alt+Escape alone, Escape before a paste, and Alt with the key that follows otherwise (rxvt's Alt+arrows).
 Partial UTF-8 and escape sequences at read boundaries are reassembled in a persistent buffer.
 With paste mode off, a paste marker is not a paste. A paste whose end marker never arrives ends once input pauses for a second, so what follows a paste that stalls that long arrives as keys.

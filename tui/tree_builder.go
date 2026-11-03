@@ -49,4 +49,3 @@ func (b *TreeBuilder) MarkLastSiblings() {
 		seen[d] = true
 	}
 }
-
