@@ -45,12 +45,12 @@ behaves as `New`'s Terminal does, the writer goroutine included; `New` is
 The application owns a flat `[]Cell` buffer (row-major, `cells[y*width+x]`) and
 passes it to `Flush`. The output buffer diffs against the previously flushed frame:
 
-- A row's first and last changed cells are found by memcmp, eight cells a compare:
-  an unchanged row costs those compares alone, and only the cells between are
-  scanned one by one.
+- A row's first and last changed cells are found by memcmp, 32 cells a compare:
+  an unchanged row costs those compares alone. Between them a cell compares as
+  three words, and a run of more than three unchanged cells is skipped by memcmp.
 - Cursor moves are emitted only when the write position is non-contiguous.
-- SGR state (fg, bg, attributes) is coalesced across cells; redundant sequences
-  are suppressed.
+- SGR state (fg, bg, attributes) is coalesced across cells: a cell in the style
+  of the cell before it costs one compare, and redundant sequences are suppressed.
 - A frame that writes is sent as one synchronized update (DEC mode 2026, 16
   bytes): a terminal that has the mode (Alacritty 0.13 and later, kitty,
   WezTerm, foot, Ghostty) draws the frame whole, never the rows a read cut it

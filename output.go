@@ -17,17 +17,19 @@ type outputBuffer struct {
 	width     int
 	height    int
 	colorMode ColorMode
-	buf       bytes.Buffer
+	buf       []byte
 
 	cursorX     int
 	cursorY     int
 	cursorValid bool
 	cursorShown bool // the caller shows the cursor; a frame leaves it as it is
 
-	// Style state for coalescing
+	// Style state for coalescing, and lastKey, the styleKey of the cell it was
+	// last given: a cell in that style needs no SGR
 	lastFg    color.RGB
 	lastBg    color.RGB
 	lastAttr  Attr
+	lastKey   uint64
 	lastValid bool
 }
 
@@ -65,14 +67,6 @@ func (o *outputBuffer) resize(width, height int) {
 	o.cursorValid = false
 }
 
-// cellEqual compares the fields most likely to change first
-func cellEqual(a, b Cell) bool {
-	return a.Rune == b.Rune &&
-		a.Bg == b.Bg &&
-		a.Fg == b.Fg &&
-		a.Attrs == b.Attrs
-}
-
 // Cell has no padding, so a row compares as the bytes it occupies; the assertion
 // fails to compile should a field change leave padding behind
 var _ [0]struct{} = [unsafe.Sizeof(Cell{}) - unsafe.Sizeof(rune(0)) - 2*unsafe.Sizeof(color.RGB{}) - unsafe.Sizeof(Attr(0))]struct{}{}
@@ -89,17 +83,37 @@ func cellsEqual(a, b []Cell) bool {
 	return bytes.Equal(unsafe.Slice((*byte)(unsafe.Pointer(&a[0])), n), unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), n))
 }
 
-// diffChunk is the cells one memcmp settles while a row's changes are sought: few
-// enough that a changed chunk costs little to search again cell by cell
-const diffChunk = 8
+// cellWords is cells as the three words each holds, the rune, then its colors
+// and attributes: two cells compare in one branch, and two styles in one compare
+func cellWords(c []Cell) []uint32 {
+	return unsafe.Slice((*uint32)(unsafe.Pointer(unsafe.SliceData(c))), 3*len(c))
+}
 
-// firstChange is the first cell where a and b differ, len(a) when none does
-func firstChange(a, b []Cell) int {
-	i := 0
+// differs reports whether cell i of a and b, as cellWords, differ
+func differs(a, b []uint32, i int) bool {
+	a, b = a[3*i:3*i+3], b[3*i:3*i+3]
+	return (a[0]^b[0])|(a[1]^b[1])|(a[2]^b[2]) != 0
+}
+
+// styleKey is cell i's colors and attributes, of cellWords, as one word
+func styleKey(w []uint32, i int) uint64 {
+	w = w[3*i+1 : 3*i+3]
+	return uint64(w[0]) | uint64(w[1])<<32
+}
+
+// diffChunk is the cells one memcmp settles while a row's changes, or the end of
+// an unchanged run, are sought: few enough that a changed chunk costs little to
+// search again cell by cell
+const diffChunk = 32
+
+// firstChange is the first cell from on where a and b differ, len(a) when none does
+func firstChange(a, b []Cell, from int) int {
+	i := from
 	for i+diffChunk <= len(a) && cellsEqual(a[i:i+diffChunk], b[i:i+diffChunk]) {
 		i += diffChunk
 	}
-	for i < len(a) && cellEqual(a[i], b[i]) {
+	aw, bw := cellWords(a), cellWords(b)
+	for i < len(a) && !differs(aw, bw, i) {
 		i++
 	}
 	return i
@@ -111,7 +125,8 @@ func lastChange(a, b []Cell, from int) int {
 	for j-diffChunk >= from && cellsEqual(a[j-diffChunk:j], b[j-diffChunk:j]) {
 		j -= diffChunk
 	}
-	for j > from && cellEqual(a[j-1], b[j-1]) {
+	aw, bw := cellWords(a), cellWords(b)
+	for j > from && !differs(aw, bw, j-1) {
 		j--
 	}
 	return j
@@ -128,115 +143,100 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 		return
 	}
 
-	w := &o.buf
-	start := w.Len()
-	w.Write(csiSyncBegin)
+	b := o.buf
+	start := len(b)
+	b = append(b, csiSyncBegin...)
 	// A host that shows the cursor on its own (a console host repainting, a resize)
 	// would show it where the last cell went: a hidden one is hidden again at each end
 	if !o.cursorShown {
-		w.Write(csiCursorHide)
+		b = append(b, csiCursorHide...)
 	}
-	body := w.Len()
+	body := len(b)
 
 	for y := 0; y < height; y++ {
-		rowStart := y * width
 		// Memcmp finds the row's first and last changed cells, so an unchanged row is
-		// one pass of compares and a changed one is scanned cell by cell between them
-		row, front := cells[rowStart:rowStart+width], o.front[rowStart:rowStart+width]
-		x := firstChange(row, front)
+		// one pass of compares; the cells between them are drawn, and the front
+		// buffer takes them as one run
+		row, front := cells[y*width:(y+1)*width], o.front[y*width:(y+1)*width]
+		x := firstChange(row, front, 0)
 		if x == width {
 			continue
 		}
-		rowEnd := lastChange(row, front, x+1)
-
-		for x < rowEnd {
-			idx := rowStart + x
-
-			if cellEqual(cells[idx], o.front[idx]) {
-				x++
-				continue
-			}
-
-			segStart := x
-			segEnd := x + 1
-
-			// A gap of up to 3 unchanged cells is rewritten, about the bytes of a cursor move
-			for segEnd < rowEnd {
-				gapStart := segEnd
-				for gapStart < rowEnd && cellEqual(cells[rowStart+gapStart], o.front[rowStart+gapStart]) {
-					gapStart++
-				}
-				gapSize := gapStart - segEnd
-
-				if gapSize == 0 {
-					for segEnd < rowEnd && !cellEqual(cells[rowStart+segEnd], o.front[rowStart+segEnd]) {
-						segEnd++
-					}
-					continue
-				}
-
-				if gapSize > 3 {
-					break
-				}
-
-				// Only a gap in the segment's style: an SGR inside it costs more than the move
-				gapCompatible := true
-				refCell := cells[rowStart+segEnd-1]
-
-				for k := 0; k < gapSize; k++ {
-					gCell := cells[rowStart+segEnd+k]
-					if gCell.Fg != refCell.Fg || gCell.Bg != refCell.Bg || gCell.Attrs != refCell.Attrs {
-						gapCompatible = false
-						break
-					}
-				}
-
-				if !gapCompatible {
-					break
-				}
-
-				if gapStart >= rowEnd {
-					break
-				}
-
-				segEnd = gapStart
-				for segEnd < rowEnd && !cellEqual(cells[rowStart+segEnd], o.front[rowStart+segEnd]) {
-					segEnd++
-				}
-			}
-
-			o.moveCursorTo(w, segStart, y)
-
-			for sx := segStart; sx < segEnd; sx++ {
-				cidx := rowStart + sx
-				c := cells[cidx]
-
-				o.writeStyleCoalesced(w, c.Fg, c.Bg, c.Attrs)
-				if r := c.Rune; r >= ' ' && r < 0x7f {
-					w.WriteByte(byte(r))
-				} else {
-					w.WriteRune(oneColumn(r))
-				}
-
-				o.front[cidx] = c
-				o.cursorX++
-			}
-
-			x = segEnd
-		}
+		end := lastChange(row, front, x+1)
+		b = o.span(b, row, front, x, end, y)
+		copy(front[x:end], row[x:end])
 	}
 
 	// A frame that changed no cell writes nothing, the reset and markers included
-	if w.Len() == body {
-		w.Truncate(start)
+	if len(b) == body {
+		b = b[:start]
 	} else {
-		w.Write(csiSGR0)
+		b = append(b, csiSGR0...)
 		if !o.cursorShown {
-			w.Write(csiCursorHide)
+			b = append(b, csiCursorHide...)
 		}
-		w.Write(csiSyncEnd)
+		b = append(b, csiSyncEnd...)
 	}
+	o.buf = b
 	o.lastValid = false
+}
+
+// span draws row y's changed cells from x to end, x and end-1 among them. A gap
+// of up to 3 unchanged cells in the style before it is drawn again, about the
+// bytes of a cursor move; a longer one, or one an SGR would interrupt, is moved over.
+func (o *outputBuffer) span(b []byte, row, front []Cell, x, end, y int) []byte {
+	rw, fw := cellWords(row), cellWords(front)
+	for x < end {
+		segEnd, next := x+1, end
+		for segEnd < end {
+			if differs(rw, fw, segEnd) {
+				segEnd++
+				continue
+			}
+			g := segEnd + 1
+			for g < end && g-segEnd <= 3 && !differs(rw, fw, g) {
+				g++
+			}
+			if g-segEnd > 3 {
+				next = firstChange(row[:end], front[:end], g)
+				break
+			}
+			if !sameStyle(rw, segEnd-1, g) {
+				next = g
+				break
+			}
+			segEnd = g
+		}
+
+		b = o.moveCursorTo(b, x, y)
+		for ; x < segEnd; x++ {
+			if k := styleKey(rw, x); !o.lastValid || k != o.lastKey {
+				c := &row[x]
+				b = o.appendStyle(b, c.Fg, c.Bg, c.Attrs)
+				o.lastKey = k
+			}
+			if r := row[x].Rune; r >= ' ' && r < 0x7f {
+				b = append(b, byte(r))
+			} else {
+				b = utf8.AppendRune(b, oneColumn(r))
+			}
+		}
+		o.cursorX = segEnd
+		x = next
+	}
+	return b
+}
+
+// sameStyle reports whether the cells after ref and before j, of cellWords w,
+// are in cell ref's style
+func sameStyle(w []uint32, ref, j int) bool {
+	k := styleKey(w, ref)
+	for i := ref + 1; i < j; i++ {
+		if styleKey(w, i) != k {
+			return false
+		}
+	}
+	return true
 }
 
 // oneColumn is r as a cell draws it: one glyph in one column, where the
@@ -350,34 +350,23 @@ func digitCount(n int) int {
 }
 
 // moveCursorTo positions cursor using most efficient method
-func (o *outputBuffer) moveCursorTo(w *bytes.Buffer, x, y int) {
+func (o *outputBuffer) moveCursorTo(b []byte, x, y int) []byte {
 	if o.cursorValid && o.cursorX == x && o.cursorY == y {
-		return
+		return b
 	}
-
-	moved := false
-	if o.cursorValid && o.cursorY == y && x > o.cursorX {
-		gap := x - o.cursorX
-		fwdCost := cursorForwardCost(gap)
-		absCost := cursorAbsoluteCost(x, y)
-
-		if fwdCost < absCost {
-			writeCursorForward(w, gap)
-			moved = true
-		}
+	if o.cursorValid && o.cursorY == y && x > o.cursorX && cursorForwardCost(x-o.cursorX) < cursorAbsoluteCost(x, y) {
+		b = appendCursorForward(b, x-o.cursorX)
+	} else {
+		b = appendCursorPos(b, x, y)
 	}
-
-	if !moved {
-		writeCursorPos(w, x, y)
-	}
-
 	o.cursorX = x
 	o.cursorY = y
 	o.cursorValid = true
+	return b
 }
 
-// writeStyleCoalesced emits a single combined SGR sequence when style changes
-func (o *outputBuffer) writeStyleCoalesced(w *bytes.Buffer, fg, bg color.RGB, attr Attr) {
+// appendStyle emits a single combined SGR sequence when style changes
+func (o *outputBuffer) appendStyle(b []byte, fg, bg color.RGB, attr Attr) []byte {
 	if o.colorMode == ColorModeNone {
 		fg, bg, attr = color.RGB{}, color.RGB{}, attr&AttrStyle
 	}
@@ -392,33 +381,32 @@ func (o *outputBuffer) writeStyleCoalesced(w *bytes.Buffer, fg, bg color.RGB, at
 	}
 
 	if !fgChanged && !bgChanged && !attrChanged {
-		return
+		return b
 	}
 
-	w.Write(csi)
+	b = append(b, csi...)
 	// If attributes changed, must reset first, then restate both colors
 	if attrChanged {
-		w.WriteByte('0')
+		b = append(b, '0')
 		for _, a := range attrCodes {
 			if styleAttr&a.bit != 0 {
-				w.WriteByte(';')
-				w.WriteByte(a.code)
+				b = append(b, ';', a.code)
 			}
 		}
 		fgChanged, bgChanged = true, true
 	}
 	if fgChanged {
-		o.writeColor(w, fg, attr&AttrFg256 != 0, attr&AttrFgDefault != 0, 30, attrChanged)
+		b = o.appendColor(b, fg, attr&AttrFg256 != 0, attr&AttrFgDefault != 0, 30, attrChanged)
 	}
 	if bgChanged {
-		o.writeColor(w, bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, attrChanged || fgChanged)
+		b = o.appendColor(b, bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, attrChanged || fgChanged)
 	}
-	w.WriteByte('m')
 
 	o.lastFg = fg
 	o.lastBg = bg
 	o.lastAttr = attr
 	o.lastValid = true
+	return append(b, 'm')
 }
 
 // attrCodes pairs each style bit with its SGR parameter, in emission order
@@ -427,19 +415,19 @@ var attrCodes = [...]struct {
 	code byte
 }{{AttrBold, '1'}, {AttrDim, '2'}, {AttrItalic, '3'}, {AttrUnderline, '4'}, {AttrBlink, '5'}, {AttrReverse, '7'}}
 
-// writeColor writes one color's SGR parameters, after a ';' when sep, for
+// appendColor appends one color's SGR parameters, after a ';' when sep, for
 // base 30 (foreground) or 40 (background): the terminal's own, a palette
-// index, or RGB, as the color mode allows. ColorModeNone writes nothing.
-func (o *outputBuffer) writeColor(w *bytes.Buffer, c color.RGB, palette, deflt bool, base int, sep bool) {
+// index, or RGB, as the color mode allows. ColorModeNone appends nothing.
+func (o *outputBuffer) appendColor(b []byte, c color.RGB, palette, deflt bool, base uint8, sep bool) []byte {
 	if o.colorMode == ColorModeNone {
-		return
+		return b
 	}
 	if sep {
-		w.WriteByte(';')
+		b = append(b, ';')
 	}
 	switch {
 	case deflt:
-		writeInt(w, base+9)
+		return appendU8(b, base+9)
 	case o.colorMode == ColorMode16:
 		i := color.RGBTo16(c)
 		if palette {
@@ -448,24 +436,18 @@ func (o *outputBuffer) writeColor(w *bytes.Buffer, c color.RGB, palette, deflt b
 		if i >= 8 {
 			base += 60 - 8 // bright: 90-97, 100-107
 		}
-		writeInt(w, base+int(i))
+		return appendU8(b, base+i)
 	case palette:
-		writeInt(w, base+8)
-		w.Write(sgrPalette)
-		writeInt(w, int(c.R))
+		b = append(appendU8(b, base+8), ";5;"...)
+		return appendU8(b, c.R)
 	case o.colorMode == ColorModeTrueColor:
-		writeInt(w, base+8)
-		w.Write(sgrRGB)
-		writeInt(w, int(c.R))
-		w.WriteByte(';')
-		writeInt(w, int(c.G))
-		w.WriteByte(';')
-		writeInt(w, int(c.B))
-	default:
-		writeInt(w, base+8)
-		w.Write(sgrPalette)
-		writeInt(w, int(RGBTo256(c)))
+		b = append(appendU8(b, base+8), ";2;"...)
+		b = append(appendU8(b, c.R), ';')
+		b = append(appendU8(b, c.G), ';')
+		return appendU8(b, c.B)
 	}
+	b = append(appendU8(b, base+8), ";5;"...)
+	return appendU8(b, RGBTo256(c))
 }
 
 func (o *outputBuffer) forceFullRedraw() {
@@ -479,12 +461,9 @@ func (o *outputBuffer) forceFullRedraw() {
 // clear renders a clear screen with specified background, attr's
 // AttrBgDefault or AttrBg256 saying how to read it
 func (o *outputBuffer) clear(bg color.RGB, attr Attr) {
-	w := &o.buf
-	w.Write(csiSGR0)
-	w.Write(csi)
-	o.writeColor(w, bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, false)
-	w.WriteByte('m')
-	w.Write(csiClear)
+	b := append(o.buf, csiSGR0...)
+	b = o.appendColor(append(b, csi...), bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, false)
+	o.buf = append(append(b, 'm'), csiClear...)
 
 	o.lastValid = false
 	o.cursorValid = false

@@ -239,14 +239,12 @@ func (t *termImpl) Init() error {
 
 	go t.writeLoop()
 
-	// Enter alternate screen, hide cursor
-	out := &t.output.buf
-	out.Write(csiAltScreenEnter)
-	out.Write(csiCursorHide)
-
-	// DISABLE AUTO-WRAP
-	// Prevents terminal scroll/wrap on bottom-right corner write
-	out.Write(csiAutoWrapOff)
+	// Enter alternate screen, hide cursor, and turn off auto-wrap, so a write to
+	// the bottom-right corner does not scroll
+	o := t.output
+	o.buf = append(o.buf, csiAltScreenEnter...)
+	o.buf = append(o.buf, csiCursorHide...)
+	o.buf = append(o.buf, csiAutoWrapOff...)
 
 	// Invisible cursor
 	t.cursorVisible.Store(false)
@@ -276,25 +274,25 @@ func (t *termImpl) Fini() {
 	}
 	t.finalized = true
 	t.holding = false // a frame not yet drawn is not drawn over the restored screen
-	w := &t.output.buf
+	o := t.output
 
 	// Disable mouse before other cleanup
 	if t.mouseMode != MouseModeNone {
-		w.Write(csiMouseMotionOff)
-		w.Write(csiMouseDragOff)
-		w.Write(csiMouseClickOff)
-		w.Write(csiMouseSGROff)
+		o.buf = append(o.buf, csiMouseMotionOff...)
+		o.buf = append(o.buf, csiMouseDragOff...)
+		o.buf = append(o.buf, csiMouseClickOff...)
+		o.buf = append(o.buf, csiMouseSGROff...)
 		t.sendLocked()
 	}
 
 	if t.paste {
-		w.Write(csiPasteOff)
+		o.buf = append(o.buf, csiPasteOff...)
 	}
 
 	// Key reports as the terminal had them, before the screen they were pushed on goes
 	if t.keyProto {
-		w.Write(csiKeyPop)
-		w.Write(csiFocusOff)
+		o.buf = append(o.buf, csiKeyPop...)
+		o.buf = append(o.buf, csiFocusOff...)
 		t.keyProto = false
 		keyProtoPushed.Store(false)
 	}
@@ -306,17 +304,12 @@ func (t *termImpl) Fini() {
 	}
 	t.mu.Lock()
 
-	// Show cursor
-	w.Write(csiCursorShow)
-
-	// Exit alternate screen
-	w.Write(csiAltScreenExit)
-
-	// Re-enable Auto-Wrap AFTER exiting alt screen to ensure the main buffer has wrap enabled
-	w.Write(csiAutoWrapOn)
-
-	// Reset attributes
-	w.Write(csiSGR0)
+	// Show the cursor, leave the alternate screen, then turn auto-wrap back on for
+	// the main buffer and reset attributes
+	o.buf = append(o.buf, csiCursorShow...)
+	o.buf = append(o.buf, csiAltScreenExit...)
+	o.buf = append(o.buf, csiAutoWrapOn...)
+	o.buf = append(o.buf, csiSGR0...)
 	t.sendLocked()
 	t.mu.Unlock()
 
@@ -425,11 +418,10 @@ func (t *termImpl) SetCursorVisible(visible bool) {
 
 	t.releaseLocked()
 	t.output.cursorShown = visible
-	w := &t.output.buf
 	if visible {
-		w.Write(csiCursorShow)
+		t.output.buf = append(t.output.buf, csiCursorShow...)
 	} else {
-		w.Write(csiCursorHide)
+		t.output.buf = append(t.output.buf, csiCursorHide...)
 	}
 	t.sendLocked()
 }
@@ -463,7 +455,7 @@ func (t *termImpl) MoveCursor(x, y int) {
 	}
 
 	// Through the queue, to keep the stream's order
-	writeCursorPos(&t.output.buf, x, y)
+	t.output.buf = appendCursorPos(t.output.buf, x, y)
 	t.sendLocked()
 }
 
@@ -541,28 +533,28 @@ func (t *termImpl) setMouseModeLocked(mode MouseMode) {
 	t.mouseMode = mode
 
 	t.releaseLocked()
-	w := &t.output.buf
+	o := t.output
 
 	// Disable modes no longer needed (reverse order of enable): VTE 0.54+,
 	// WezTerm and Windows Terminal keep each one set and report by the highest
 	if oldMode&MouseModeMotion != 0 && mode&MouseModeMotion == 0 {
-		w.Write(csiMouseMotionOff)
+		o.buf = append(o.buf, csiMouseMotionOff...)
 	}
 	if oldMode&MouseModeDrag != 0 && mode&MouseModeDrag == 0 {
-		w.Write(csiMouseDragOff)
+		o.buf = append(o.buf, csiMouseDragOff...)
 	}
 	if oldMode&MouseModeClick != 0 && mode&MouseModeClick == 0 {
-		w.Write(csiMouseClickOff)
+		o.buf = append(o.buf, csiMouseClickOff...)
 	}
 
 	// Disable SGR if disabling all mouse
 	if mode == MouseModeNone && oldMode != MouseModeNone {
-		w.Write(csiMouseSGROff)
+		o.buf = append(o.buf, csiMouseSGROff...)
 	}
 
 	// Enable SGR first if enabling any mouse mode
 	if mode != MouseModeNone && oldMode == MouseModeNone {
-		w.Write(csiMouseSGROn)
+		o.buf = append(o.buf, csiMouseSGROn...)
 	}
 
 	// xterm, xterm.js, kitty, tmux and Konsole keep one mode, which setting
@@ -583,13 +575,13 @@ func (t *termImpl) setMouseModeLocked(mode MouseMode) {
 	// Enable new modes, and the highest again (click is base, drag extends,
 	// motion extends further)
 	if mode&MouseModeClick != 0 && (oldMode&MouseModeClick == 0 || top == MouseModeClick) {
-		w.Write(csiMouseClickOn)
+		o.buf = append(o.buf, csiMouseClickOn...)
 	}
 	if mode&MouseModeDrag != 0 && (oldMode&MouseModeDrag == 0 || top == MouseModeDrag) {
-		w.Write(csiMouseDragOn)
+		o.buf = append(o.buf, csiMouseDragOn...)
 	}
 	if mode&MouseModeMotion != 0 && (oldMode&MouseModeMotion == 0 || top == MouseModeMotion) {
-		w.Write(csiMouseMotionOn)
+		o.buf = append(o.buf, csiMouseMotionOn...)
 	}
 
 	t.sendLocked()
@@ -606,11 +598,10 @@ func (t *termImpl) SetPasteMode(on bool) error {
 	t.paste = on
 	t.input.pasteMode.Store(on)
 	t.releaseLocked()
-	w := &t.output.buf
 	if on {
-		w.Write(csiPasteOn)
+		t.output.buf = append(t.output.buf, csiPasteOn...)
 	} else {
-		w.Write(csiPasteOff)
+		t.output.buf = append(t.output.buf, csiPasteOff...)
 	}
 	t.sendLocked()
 	return nil
@@ -630,7 +621,7 @@ func (t *termImpl) keyWrite(seq []byte, pushed bool) bool {
 		return false
 	}
 	t.releaseLocked()
-	t.output.buf.Write(seq)
+	t.output.buf = append(t.output.buf, seq...)
 	t.sendLocked()
 	// A terminal that takes a request for its own (an old st restores the
 	// cursor on CSI ? u) has moved it as far as the next frame knows

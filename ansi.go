@@ -1,8 +1,6 @@
 package terminal
 
-import (
-	"bytes"
-)
+import "strconv"
 
 // Pre-allocated ANSI sequence fragments (avoid allocations during render)
 var (
@@ -31,10 +29,6 @@ var (
 	csiAutoWrapOn  = []byte("\x1b[?7h")
 	csiAutoWrapOff = []byte("\x1b[?7l")
 
-	// Color parameters, after 38 or 48
-	sgrPalette = []byte(";5;") // followed by N
-	sgrRGB     = []byte(";2;") // followed by R;G;B
-
 	// Mouse mode sequences (SGR 1006 for extended coordinates)
 	csiMouseClickOn   = []byte("\x1b[?1000h") // Enable click reporting
 	csiMouseClickOff  = []byte("\x1b[?1000l")
@@ -52,56 +46,44 @@ var (
 	pasteEnd    = []byte("\x1b[201~")
 )
 
-// writeInt writes an integer without allocation
-// Optimized for terminal values (0-255 common, 0-999 typical max)
-func writeInt(w *bytes.Buffer, n int) {
-	if n < 0 {
-		n = 0
+// decimal holds each byte value's digits, then how many there are in its last
+// byte, so a value appends as one store of three bytes, with no branch
+var decimal = func() (t [256][4]byte) {
+	for v := range t {
+		n := copy(t[v][:3], strconv.Itoa(v))
+		t[v][3] = byte(n)
 	}
-	if n < 10 {
-		w.WriteByte(byte(n) + '0')
-		return
-	}
-	if n < 100 {
-		w.WriteByte(byte(n/10) + '0')
-		w.WriteByte(byte(n%10) + '0')
-		return
-	}
-	if n < 1000 {
-		w.WriteByte(byte(n/100) + '0')
-		w.WriteByte(byte(n/10%10) + '0')
-		w.WriteByte(byte(n%10) + '0')
-		return
-	}
-	var buf [5]byte
-	i := 4
-	for n > 0 {
-		buf[i] = byte(n%10) + '0'
-		n /= 10
-		i--
-	}
-	w.Write(buf[i+1:])
+	return t
+}()
+
+// appendU8 appends v in decimal
+func appendU8(b []byte, v uint8) []byte {
+	d := &decimal[v]
+	n := len(b) + int(d[3])
+	return append(b, d[0], d[1], d[2])[:n]
 }
 
-// writeCursorPos writes cursor positioning sequence (0-indexed input)
-func writeCursorPos(w *bytes.Buffer, x, y int) {
-	w.Write(csiCursorPos)
-	writeInt(w, y+1)
-	w.WriteByte(';')
-	writeInt(w, x+1)
-	w.WriteByte('H')
+// appendInt appends n in decimal, a negative n as 0
+func appendInt(b []byte, n int) []byte {
+	if uint(n) < 256 {
+		return appendU8(b, uint8(n))
+	}
+	return strconv.AppendInt(b, int64(max(n, 0)), 10)
 }
 
-// writeCursorForward writes cursor forward N positions
-func writeCursorForward(w *bytes.Buffer, n int) {
+// appendCursorPos appends cursor positioning sequence (0-indexed input)
+func appendCursorPos(b []byte, x, y int) []byte {
+	b = appendInt(append(b, csiCursorPos...), y+1)
+	return append(appendInt(append(b, ';'), x+1), 'H')
+}
+
+// appendCursorForward appends cursor forward N positions
+func appendCursorForward(b []byte, n int) []byte {
 	if n <= 0 {
-		return
+		return b
 	}
 	if n == 1 {
-		w.Write([]byte("\x1b[C"))
-		return
+		return append(b, "\x1b[C"...)
 	}
-	w.Write(csi)
-	writeInt(w, n)
-	w.WriteByte('C')
+	return append(appendInt(append(b, csi...), n), 'C')
 }

@@ -5,12 +5,12 @@ import "time"
 // sendLocked queues what the operation in progress rendered and wakes the writer.
 // Caller MUST hold mu.
 func (t *termImpl) sendLocked() {
-	buf := &t.output.buf
-	if buf.Len() == 0 {
+	o := t.output
+	if len(o.buf) == 0 {
 		return
 	}
-	t.queued = append(t.queued, buf.Bytes()...)
-	buf.Reset()
+	t.queued = append(t.queued, o.buf...)
+	o.buf = o.buf[:0]
 	select {
 	case t.wake <- struct{}{}:
 	default:

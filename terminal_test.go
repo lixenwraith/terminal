@@ -5,10 +5,12 @@ import (
 	"cmp"
 	"math/rand/v2"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/lixenwraith/color"
 )
@@ -94,7 +96,7 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 	} {
 		o := newOutputBuffer(c.mode)
 		o.flush(c.cells, len(c.cells), 1)
-		if got, want := o.buf.String(), synced("\x1b[1;1H"+c.want); got != want {
+		if got, want := string(o.buf), synced("\x1b[1;1H"+c.want); got != want {
 			t.Errorf("mode %d %+v: %q, want %q", c.mode, c.cells, got, want)
 		}
 	}
@@ -107,7 +109,7 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 func TestCellsSendNoControlCharacters(t *testing.T) {
 	o := newOutputBuffer(ColorMode256)
 	o.flush([]Cell{{Rune: 0x1b}, {Rune: 0x9b}, {Rune: 0x7f}, {Rune: -229}, {Rune: 0xd800}, {Rune: 0x202e}, {Rune: 0x2067}, {Rune: 0x061c}, {Rune: 0x200b}, {Rune: 0x2028}, {Rune: 'é'}}, 11, 1)
-	if got, want := o.buf.String(), synced("\x1b[1;1H\x1b[0;38;5;16;48;5;16m          é"); got != want {
+	if got, want := string(o.buf), synced("\x1b[1;1H\x1b[0;38;5;16;48;5;16m          é"); got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }
@@ -123,7 +125,7 @@ func TestEachCellIsOneColumn(t *testing.T) {
 		row = append(row, Cell{Rune: r})
 	}
 	o.flush(row, len(row), 1)
-	if got, want := o.buf.String(), synced("\x1b[1;1H\x1b[0;38;5;16;48;5;16m"+strings.Repeat("\ufffd", 10)+"é─❤"); got != want {
+	if got, want := string(o.buf), synced("\x1b[1;1H\x1b[0;38;5;16;48;5;16m"+strings.Repeat("\ufffd", 10)+"é─❤"); got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }
@@ -134,9 +136,9 @@ func TestUnchangedFrameWritesNothing(t *testing.T) {
 	o := newOutputBuffer(ColorMode256)
 	frame := []Cell{{Rune: 'a'}, {Rune: 'é'}}
 	o.flush(frame, len(frame), 1)
-	o.buf.Reset()
-	if o.flush(frame, len(frame), 1); o.buf.Len() != 0 {
-		t.Fatalf("unchanged frame wrote %q", o.buf.String())
+	o.buf = o.buf[:0]
+	if o.flush(frame, len(frame), 1); len(o.buf) != 0 {
+		t.Fatalf("unchanged frame wrote %q", string(o.buf))
 	}
 }
 
@@ -144,17 +146,74 @@ func TestUnchangedFrameWritesNothing(t *testing.T) {
 // wide the row: after a flush the screen the terminal holds is the frame
 func TestEveryChangedCellIsWritten(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
-	for _, width := range []int{1, 7, 8, 9, 17, 120} {
+	for _, width := range []int{1, 7, 31, 32, 33, 65, 120} {
 		o := newOutputBuffer(ColorModeTrueColor)
-		frame := make([]Cell, width*4)
+		frame := slices.Repeat([]Cell{{Rune: 'a'}}, width*4)
+		term := &vt{screen: make([]Cell, len(frame)), width: width}
 		for range 200 {
 			for range rng.IntN(len(frame)/2 + 1) {
-				frame[rng.IntN(len(frame))] = Cell{Rune: 'a' + rng.Int32N(4), Fg: color.RGB{G: uint8(rng.IntN(2))}}
+				frame[rng.IntN(len(frame))] = Cell{Rune: 'a' + rng.Int32N(4), Fg: color.RGB{G: uint8(rng.IntN(2))},
+					Bg: color.RGB{B: uint8(rng.IntN(2))}, Attrs: AttrBold * Attr(rng.IntN(2))}
 			}
 			o.flush(frame, width, 4)
-			if !slices.Equal(o.front, frame) {
-				t.Fatalf("width %d: a changed cell went unwritten", width)
+			term.play(t, string(o.buf))
+			o.buf = o.buf[:0]
+			if !slices.Equal(term.screen, frame) {
+				t.Fatalf("width %d: the screen is not the frame", width)
 			}
+		}
+	}
+}
+
+// vt is a terminal as far as a true color frame drives one: cursor moves, SGR
+// and runes, the cursor held at the right edge as auto-wrap off holds it
+type vt struct {
+	screen      []Cell
+	width, x, y int
+	pen         Cell
+}
+
+func (v *vt) play(t *testing.T, s string) {
+	for s != "" {
+		if s[0] != 0x1b {
+			r, n := utf8.DecodeRuneInString(s)
+			v.pen.Rune, s = r, s[n:]
+			v.screen[v.y*v.width+v.x] = v.pen
+			v.x = min(v.x+1, v.width-1)
+			continue
+		}
+		end := 2 + strings.IndexFunc(s[2:], func(r rune) bool { return r >= 0x40 && r <= 0x7e })
+		params, final := strings.Split(s[2:end], ";"), s[end]
+		s = s[end+1:]
+		n := make([]int, len(params))
+		for i, p := range params {
+			n[i], _ = strconv.Atoi(p)
+		}
+		switch {
+		case final == 'H':
+			v.y, v.x = n[0]-1, n[1]-1
+		case final == 'C':
+			v.x = min(v.x+max(n[0], 1), v.width-1)
+		case final == 'm':
+			for i := 0; i < len(n); i++ {
+				switch n[i] {
+				case 0:
+					v.pen = Cell{}
+				case 1:
+					v.pen.Attrs |= AttrBold
+				case 38, 48:
+					c := color.RGB{R: uint8(n[i+2]), G: uint8(n[i+3]), B: uint8(n[i+4])}
+					if n[i] == 38 {
+						v.pen.Fg = c
+					} else {
+						v.pen.Bg = c
+					}
+					i += 4
+				}
+			}
+		case params[0] == "?2026" || params[0] == "?25":
+		default:
+			t.Fatalf("unexpected sequence ending %q", final)
 		}
 	}
 }
