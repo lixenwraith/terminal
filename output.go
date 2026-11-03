@@ -1,7 +1,8 @@
 package terminal
 
 import (
-	"bytes"
+	"math/bits"
+	"runtime"
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
@@ -23,6 +24,8 @@ type outputBuffer struct {
 	cursorY     int
 	cursorValid bool
 	cursorShown bool // the caller shows the cursor; a frame leaves it as it is
+
+	diff []uint64 // a row's changed cells, as ChangedCells marks them
 
 	// Style state for coalescing, and lastKey, the styleKey of the cell it was
 	// last given: a cell in that style needs no SGR
@@ -67,32 +70,14 @@ func (o *outputBuffer) resize(width, height int) {
 	o.cursorValid = false
 }
 
-// Cell has no padding, so a row compares as the bytes it occupies; the assertion
-// fails to compile should a field change leave padding behind
+// Cell has no padding: it is the three words cellWords and the ChangedCells
+// kernels read, and the assertion fails to compile should that change
 var _ [0]struct{} = [unsafe.Sizeof(Cell{}) - unsafe.Sizeof(rune(0)) - 2*unsafe.Sizeof(color.RGB{}) - unsafe.Sizeof(Attr(0))]struct{}{}
-
-// cellsEqual reports whether two runs of cells hold the same cells, as one memcmp
-func cellsEqual(a, b []Cell) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	n := len(a) * int(unsafe.Sizeof(Cell{}))
-	return bytes.Equal(unsafe.Slice((*byte)(unsafe.Pointer(&a[0])), n), unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), n))
-}
 
 // cellWords is cells as the three words each holds, the rune, then its colors
 // and attributes: two cells compare in one branch, and two styles in one compare
 func cellWords(c []Cell) []uint32 {
 	return unsafe.Slice((*uint32)(unsafe.Pointer(unsafe.SliceData(c))), 3*len(c))
-}
-
-// differs reports whether cell i of a and b, as cellWords, differ
-func differs(a, b []uint32, i int) bool {
-	a, b = a[3*i:3*i+3], b[3*i:3*i+3]
-	return (a[0]^b[0])|(a[1]^b[1])|(a[2]^b[2]) != 0
 }
 
 // styleKey is cell i's colors and attributes, of cellWords, as one word
@@ -101,35 +86,91 @@ func styleKey(w []uint32, i int) uint64 {
 	return uint64(w[0]) | uint64(w[1])<<32
 }
 
-// diffChunk is the cells one memcmp settles while a row's changes, or the end of
-// an unchanged run, are sought: few enough that a changed chunk costs little to
-// search again cell by cell
-const diffChunk = 32
-
-// firstChange is the first cell from on where a and b differ, len(a) when none does
-func firstChange(a, b []Cell, from int) int {
-	i := from
-	for i+diffChunk <= len(a) && cellsEqual(a[i:i+diffChunk], b[i:i+diffChunk]) {
-		i += diffChunk
+// ChangedCells returns, in dst's storage, a bit for each cell where a and b
+// differ: bit i&63 of word i>>6 for cell i of the first min(len(a), len(b)),
+// the bits past them clear. A frame's changed cells are the bits set against
+// the frame before; built with GOEXPERIMENT=simd, cells compare as vectors.
+func ChangedCells(dst []uint64, a, b []Cell) []uint64 {
+	n := min(len(a), len(b))
+	words := (n + 63) >> 6
+	if cap(dst) < words {
+		dst = make([]uint64, words)
 	}
-	aw, bw := cellWords(a), cellWords(b)
-	for i < len(a) && !differs(aw, bw, i) {
-		i++
-	}
-	return i
+	dst = dst[:words]
+	changedBits(dst, cellWords(a[:n]), cellWords(b[:n]), n)
+	return dst
 }
 
-// lastChange is one past the last cell from on where a and b differ, from when none does
-func lastChange(a, b []Cell, from int) int {
-	j := len(a)
-	for j-diffChunk >= from && cellsEqual(a[j-diffChunk:j], b[j-diffChunk:j]) {
-		j -= diffChunk
+// skipEqual is whether a block that one memcmp finds unchanged is skipped:
+// everywhere but wasm, whose memcmp goes a byte at a time
+const skipEqual = runtime.GOARCH != "wasm"
+
+// changedWords sets m's words from w on as changedBits does, in plain Go: a
+// block of 64 cells, then of 16, that one memcmp finds unchanged is skipped
+func changedWords(m []uint64, a, b []uint32, n, w int) {
+	for ; w < len(m); w++ {
+		lo, hi := w<<6, min(w<<6+64, n)
+		if skipEqual && hi-lo == 64 && *(*[192]uint32)(a[3*lo:]) == *(*[192]uint32)(b[3*lo:]) {
+			m[w] = 0
+			continue
+		}
+		var bits uint64
+		s := lo
+		for ; s+16 <= hi; s += 16 {
+			if p, q := (*[48]uint32)(a[3*s:]), (*[48]uint32)(b[3*s:]); !skipEqual || *p != *q {
+				bits |= uint64(cellBits16(p, q)) << (s - lo)
+			}
+		}
+		for i := s; i < hi; i++ {
+			p, q := a[3*i:3*i+3:3*i+3], b[3*i:3*i+3:3*i+3]
+			d := (p[0] ^ q[0]) | (p[1] ^ q[1]) | (p[2] ^ q[2])
+			bits |= uint64((d|-d)>>31) << (i - lo)
+		}
+		m[w] = bits
 	}
-	aw, bw := cellWords(a), cellWords(b)
-	for j > from && !differs(aw, bw, j-1) {
-		j--
+}
+
+// cellBits16 is a bit for each of 16 cells, as cellWords, that differs
+func cellBits16(p, q *[48]uint32) uint16 {
+	var bits uint16
+	for i := range 16 {
+		d := (p[3*i] ^ q[3*i]) | (p[3*i+1] ^ q[3*i+1]) | (p[3*i+2] ^ q[3*i+2])
+		bits |= uint16((d|-d)>>31) << i
 	}
-	return j
+	return bits
+}
+
+// nextSet is the first cell from p before end that m marks, end when none is
+func nextSet(m []uint64, p, end int) int {
+	for p < end {
+		if w := m[p>>6] >> (p & 63); w != 0 {
+			return min(p+bits.TrailingZeros64(w), end)
+		}
+		p = (p | 63) + 1
+	}
+	return end
+}
+
+// nextClear is the first cell from p before end that m leaves clear, end when
+// none is
+func nextClear(m []uint64, p, end int) int {
+	for p < end {
+		if w := ^m[p>>6] >> (p & 63); w != 0 {
+			return min(p+bits.TrailingZeros64(w), end)
+		}
+		p = (p | 63) + 1
+	}
+	return end
+}
+
+// lastSet is one past the last cell m marks, 0 when it marks none
+func lastSet(m []uint64) int {
+	for k := len(m) - 1; k >= 0; k-- {
+		if m[k] != 0 {
+			return k<<6 + 64 - bits.LeadingZeros64(m[k])
+		}
+	}
+	return 0
 }
 
 // flush renders the back buffer into buf, diffing against front buffer
@@ -154,16 +195,16 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	body := len(b)
 
 	for y := 0; y < height; y++ {
-		// Memcmp finds the row's first and last changed cells, so an unchanged row is
-		// one pass of compares; the cells between them are drawn, and the front
-		// buffer takes them as one run
+		// The row's changed cells as bits: those between the first and the last
+		// are drawn, and the front buffer takes them as one run
 		row, front := cells[y*width:(y+1)*width], o.front[y*width:(y+1)*width]
-		x := firstChange(row, front, 0)
+		o.diff = ChangedCells(o.diff, row, front)
+		x := nextSet(o.diff, 0, width)
 		if x == width {
 			continue
 		}
-		end := lastChange(row, front, x+1)
-		b = o.span(b, row, front, x, end, y)
+		end := lastSet(o.diff)
+		b = o.span(b, row, o.diff, x, end, y)
 		copy(front[x:end], row[x:end])
 	}
 
@@ -181,31 +222,25 @@ func (o *outputBuffer) flush(cells []Cell, width, height int) {
 	o.lastValid = false
 }
 
-// span draws row y's changed cells from x to end, x and end-1 among them. A gap
-// of up to 3 unchanged cells in the style before it is drawn again, about the
-// bytes of a cursor move; a longer one, or one an SGR would interrupt, is moved over.
-func (o *outputBuffer) span(b []byte, row, front []Cell, x, end, y int) []byte {
-	rw, fw := cellWords(row), cellWords(front)
+// span draws row y's changed cells, the ones m marks, from x to end, x and end-1
+// among them. A gap of up to 3 unchanged cells in the style before it is drawn
+// again, about the bytes of a cursor move; a longer one, or one an SGR would
+// interrupt, is moved over.
+func (o *outputBuffer) span(b []byte, row []Cell, m []uint64, x, end, y int) []byte {
+	rw := cellWords(row)
 	for x < end {
-		segEnd, next := x+1, end
-		for segEnd < end {
-			if differs(rw, fw, segEnd) {
-				segEnd++
-				continue
-			}
-			g := segEnd + 1
-			for g < end && g-segEnd <= 3 && !differs(rw, fw, g) {
-				g++
-			}
-			if g-segEnd > 3 {
-				next = firstChange(row[:end], front[:end], g)
+		segEnd, next := end, end
+		for p := x; ; {
+			run := nextClear(m, p, end)
+			if run == end {
 				break
 			}
-			if !sameStyle(rw, segEnd-1, g) {
-				next = g
+			g := nextSet(m, run, end)
+			if g-run > 3 || !sameStyle(rw, run-1, g) {
+				segEnd, next = run, g
 				break
 			}
-			segEnd = g
+			p = g
 		}
 
 		b = o.moveCursorTo(b, x, y)

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/lixenwraith/color"
 )
@@ -186,6 +187,42 @@ func TestEveryChangedCellIsWritten(t *testing.T) {
 			}
 		}
 	}
+}
+
+// ChangedCells marks exactly the cells where two runs differ, whichever of a
+// cell's twelve bytes differs, at any length and offset, in the kernel the build
+// selected: plain Go, or with GOEXPERIMENT=simd, AVX2, NEON or wasm SIMD128
+func FuzzChangedCells(f *testing.F) {
+	for _, n := range []uint16{0, 1, 3, 4, 7, 8, 9, 63, 64, 65, 127, 128, 200, 333} {
+		f.Add(n, uint64(n)*0x9e3779b97f4a7c15, uint8(n%5))
+	}
+	f.Fuzz(func(t *testing.T, size uint16, seed uint64, skip uint8) {
+		n := int(size % 400)
+		rng := rand.New(rand.NewPCG(seed, uint64(size)))
+		a := make([]Cell, n+int(skip%5))
+		for i := range a {
+			a[i] = Cell{Rune: rng.Int32(), Fg: color.RGB{R: uint8(rng.Uint32()), G: uint8(rng.Uint32()), B: uint8(rng.Uint32())},
+				Bg: color.RGB{R: uint8(rng.Uint32()), G: uint8(rng.Uint32()), B: uint8(rng.Uint32())}, Attrs: Attr(rng.Uint32())}
+		}
+		b := slices.Clone(a)
+		if n > 0 {
+			for range rng.IntN(n/2 + 2) {
+				i := rng.IntN(len(b))
+				cell := (*[12]byte)(unsafe.Pointer(&b[i]))
+				cell[rng.IntN(12)] ^= 1 << rng.IntN(8)
+			}
+		}
+		a, b = a[skip%5:], b[skip%5:] // a run starting past a block's first cell
+		m := ChangedCells(make([]uint64, 1), a, b)
+		if len(m) != (len(a)+63)/64 {
+			t.Fatalf("%d cells: %d words", len(a), len(m))
+		}
+		for i := range 64 * len(m) {
+			if got, want := m[i>>6]>>(i&63)&1 == 1, i < len(a) && a[i] != b[i]; got != want {
+				t.Fatalf("%d cells: cell %d marked %v", len(a), i, got)
+			}
+		}
+	})
 }
 
 // vt is a terminal as far as a true color frame drives one: cursor moves, SGR

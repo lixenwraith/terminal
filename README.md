@@ -47,9 +47,10 @@ pending, and `Wake` ends that wait for a stop or a key report ask.
 The application owns a flat `[]Cell` buffer (row-major, `cells[y*width+x]`) and
 passes it to `Flush`. The output buffer diffs against the previously flushed frame:
 
-- A row's first and last changed cells are found by memcmp, 32 cells a compare:
-  an unchanged row costs those compares alone. Between them a cell compares as
-  three words, and a run of more than three unchanged cells is skipped by memcmp.
+- A row's changed cells come as a bitmap from `ChangedCells`: a block of 64
+  cells, then of 16, that one memcmp finds unchanged costs that compare alone,
+  and a cell compares as three words. The cells between the first and last set
+  bits are drawn, a run of more than three unchanged ones moved over.
 - Cursor moves are emitted only when the write position is non-contiguous.
 - SGR state (fg, bg, attributes) is coalesced across cells: a cell in the style
   of the cell before it costs one compare, and redundant sequences are suppressed.
@@ -85,6 +86,23 @@ restoring sequences, then restores the termios without them.
 Auto-wrap and, where the terminal follows ECMA-48 mode 8 (VTE), its own bidi
 reordering are off during the session: the bottom-right cell is writable
 without scroll side effects, and right-to-left text stays in its cells.
+
+### Changed cells and SIMD
+
+`ChangedCells(dst, a, b)` is the diff `Flush` runs on each row, exported for a
+renderer that draws cells itself (a canvas, a texture, a framebuffer): bit
+`i&63` of word `i>>6` is set where `a[i]` and `b[i]` differ, in `dst`'s storage.
+
+Built with `GOEXPERIMENT=simd` (Go 1.27), it compares cells as vectors through
+`simd/archsimd`: AVX2 on amd64 where the CPU has it, NEON on arm64, SIMD128 in
+wasm, whose module then needs a browser with WebAssembly SIMD (every current
+one). Other targets, and builds without the experiment, compare in plain Go;
+the bits, and the bytes `Flush` writes, are the same either way.
+
+The experiment is Go's and outside the Go 1 promise: a toolchain that changes
+`simd/archsimd` can stop this build until the package follows, and on amd64 it
+also moves the runtime's map hashing onto archsimd. Built without it, nothing
+in the package changes.
 
 ## Quick start
 
