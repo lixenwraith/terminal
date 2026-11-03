@@ -196,4 +196,3 @@ func formatLineNum(num, width int) string {
 	}
 	return s
 }
-

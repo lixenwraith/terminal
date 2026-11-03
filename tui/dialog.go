@@ -313,4 +313,3 @@ func (r Region) AlertDialog(opts AlertOpts) Region {
 
 	return content.Sub(0, 0, content.W, buttonY-1)
 }
-

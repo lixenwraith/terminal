@@ -57,4 +57,3 @@ func (r Region) Modal(opts ModalOpts) Region {
 	// Return content region
 	return r.Sub(1, 1, r.W-2, r.H-2)
 }
-

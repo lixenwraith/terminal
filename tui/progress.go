@@ -123,4 +123,3 @@ func (r Region) Gauge(x, y, w int, value, max int, fg, bg color.RGB) {
 	}
 	r.Text(x+2+barW, y, label, fg, bg, terminal.AttrNone)
 }
-

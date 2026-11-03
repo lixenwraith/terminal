@@ -35,4 +35,3 @@ func (r Region) Checkbox(x, y int, state CheckState, fg color.RGB) {
 	r.Cell(x+1, y, ch, fg, color.RGB{}, terminal.AttrNone)
 	r.Cell(x+2, y, ']', fg, color.RGB{}, terminal.AttrNone)
 }
-

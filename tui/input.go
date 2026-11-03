@@ -77,4 +77,3 @@ func (r Region) Input(y int, opts InputOpts) {
 		r.Cell(x+cursor-scroll, y, ' ', opts.TextFg, opts.CursorBg, terminal.AttrNone)
 	}
 }
-
