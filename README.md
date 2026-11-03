@@ -38,7 +38,9 @@ Platform specifics are isolated in the `Backend` implementations.
 `NewWithBackend(b, mode)` builds a Terminal over a `Backend` of the caller's
 own: a pipe, an in-process emulator or a test standing in for the tty. It
 behaves as `New`'s Terminal does, the writer goroutine included; `New` is
-`NewWithBackend` over the platform's backend and the detected color mode.
+`NewWithBackend` over the platform's backend and the detected color mode. Its
+`Read` waits as long as the reader allows, without limit when nothing is
+pending, and `Wake` ends that wait for a stop or a key report ask.
 
 ### Rendering pipeline
 
@@ -258,7 +260,8 @@ division approximation; `SoftLight` uses init-time LUTs replacing `math.Sqrt`.
 - `EventFocus` — `Focused`, while releases come through the terminal's protocol
 - `EventError`, `EventClosed`
 
-A standalone ESC press is disambiguated from escape sequences by a short input-idle timeout (one ~10ms poll cycle).
+A standalone ESC press is told from an escape sequence by input pausing 10 ms after it.
+Otherwise the reader waits on input with no limit, so an idle terminal takes no wakeups: on Unix the read polls the terminal beside a pipe that `Wake` writes to, and only a lone ESC, a paste, a key protocol exchange or keys held on a console bound the wait. Windows still checks every 10 ms inside its read.
 ESC ESC is Alt+Escape alone, Escape before a paste, and Alt with the key that follows otherwise (rxvt's Alt+arrows).
 Partial UTF-8 and escape sequences at read boundaries are reassembled in a persistent buffer.
 With paste mode off, a paste marker is not a paste. A paste whose end marker never arrives ends once input pauses for a second, so what follows a paste that stalls that long arrives as keys.

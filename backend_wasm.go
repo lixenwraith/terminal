@@ -5,22 +5,22 @@ package terminal
 import (
 	"os"
 	"syscall/js"
+	"time"
 )
 
 type wasmBackend struct {
-	width, height   int
-	inputCh         chan []byte
-	jsCallbacks     []js.Func
-	returnEmptyNext bool // Signal to return empty on next Read() for standalone ESC
+	width, height int
+	inputCh       chan []byte
+	wake          chan struct{}
+	jsCallbacks   []js.Func
 }
-
-const escapeTimeoutMs = 10
 
 func newBackend() Backend {
 	return &wasmBackend{
 		width:   80,
 		height:  24,
 		inputCh: make(chan []byte, 256),
+		wake:    make(chan struct{}, 1),
 	}
 }
 
@@ -95,50 +95,28 @@ func (b *wasmBackend) Write(p []byte) error {
 	return nil
 }
 
-func (b *wasmBackend) Read(stopCh <-chan struct{}) ([]byte, error) {
-	// After standalone ESC timeout, return empty to trigger readLoop's ESC emission
-	if b.returnEmptyNext {
-		b.returnEmptyNext = false
-		return nil, nil
+// Read takes what the page sent; a lone ESC waits out the reader's wait, which
+// ends it as Escape
+func (b *wasmBackend) Read(wait time.Duration) ([]byte, error) {
+	var passed <-chan time.Time
+	if wait >= 0 {
+		t := time.NewTimer(wait)
+		defer t.Stop()
+		passed = t.C
 	}
-
 	select {
 	case data := <-b.inputCh:
-		// If we received ESC, or ESC ESC, wait briefly for more data
-		// (in case it's start of escape sequence split across callbacks)
-		if string(data) == "\x1b" || string(data) == "\x1b\x1b" {
-			// Use JS setTimeout via a promise-based wait
-			moreCh := make(chan []byte, 1)
-
-			// Schedule timeout callback
-			var timeoutCb js.Func
-			timeoutCb = js.FuncOf(func(_ js.Value, _ []js.Value) any {
-				select {
-				case moreCh <- nil:
-				default:
-				}
-				timeoutCb.Release()
-				return nil
-			})
-			js.Global().Call("setTimeout", timeoutCb, escapeTimeoutMs)
-
-			// Wait for more data or timeout
-			select {
-			case more := <-b.inputCh:
-				// More data arrived, combine
-				return append(data, more...), nil
-			case <-moreCh:
-				// Timeout, standalone ESC confirmed
-				// Signal next Read() to return empty (triggers readLoop standalone ESC logic)
-				b.returnEmptyNext = true
-				return data, nil
-			case <-stopCh:
-				return nil, nil
-			}
-		}
 		return data, nil
-	case <-stopCh:
-		return nil, nil
+	case <-b.wake:
+	case <-passed:
+	}
+	return nil, nil
+}
+
+func (b *wasmBackend) Wake() {
+	select {
+	case b.wake <- struct{}{}:
+	default:
 	}
 }
 

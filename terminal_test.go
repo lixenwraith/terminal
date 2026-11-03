@@ -15,14 +15,17 @@ import (
 	"github.com/lixenwraith/color"
 )
 
-// fakeBackend records output and replays input chunks; an empty chunk, or
-// none left, is a poll timing out, and pause blocks a read as wasm's does
+// fakeBackend records output and the waits it is read with, and replays input
+// chunks; an empty chunk, or none left, is a wait passing, and pause holds a
+// read that has input back
 type fakeBackend struct {
 	mu     sync.Mutex
 	out    bytes.Buffer
 	chunks []string
+	waits  []time.Duration
 	pause  time.Duration
 	gate   chan struct{} // when set, a write waits until it is closed
+	woken  chan struct{}
 }
 
 func (f *fakeBackend) Init() error                              { return nil }
@@ -40,24 +43,42 @@ func (f *fakeBackend) Write(p []byte) error {
 	return nil
 }
 
-func (f *fakeBackend) Read(stop <-chan struct{}) ([]byte, error) {
+func (f *fakeBackend) Read(wait time.Duration) ([]byte, error) {
 	f.mu.Lock()
+	f.waits = append(f.waits, wait)
+	if f.woken == nil {
+		f.woken = make(chan struct{}, 1)
+	}
+	woken := f.woken
 	if len(f.chunks) > 0 {
 		c := f.chunks[0]
 		f.chunks = f.chunks[1:]
 		f.mu.Unlock()
 		if c == "" {
-			time.Sleep(5 * time.Millisecond) // a poll timing out
+			time.Sleep(5 * time.Millisecond) // a wait passing
 		}
 		time.Sleep(f.pause)
 		return []byte(c), nil
 	}
 	f.mu.Unlock()
 	select {
-	case <-stop:
+	case <-woken:
 	case <-time.After(5 * time.Millisecond):
 	}
 	return nil, nil
+}
+
+func (f *fakeBackend) Wake() {
+	f.mu.Lock()
+	if f.woken == nil {
+		f.woken = make(chan struct{}, 1)
+	}
+	woken := f.woken
+	f.mu.Unlock()
+	select {
+	case woken <- struct{}{}:
+	default:
+	}
 }
 
 func (f *fakeBackend) written() string {
@@ -233,6 +254,71 @@ func TestPasteArrivesWhole(t *testing.T) {
 		"blocking": {idle: 20 * time.Millisecond, pause: 40 * time.Millisecond, chunks: []string{"\x1b[200~ab", "q"}, want: []Event{paste("ab"), key('q')}},
 		"mode off": {off: true, chunks: []string{"\x1b[200~q"}, want: []Event{key('q')}},
 	})
+}
+
+// stepBackend hands the reader the chunks a test sends, one a read, a nil one
+// a wait passing, and tells the test the wait each read was given
+type stepBackend struct {
+	fakeBackend
+	in    chan []byte
+	waits chan time.Duration
+}
+
+func newStepBackend() *stepBackend {
+	s := &stepBackend{in: make(chan []byte), waits: make(chan time.Duration, 1)}
+	s.woken = make(chan struct{}, 1)
+	return s
+}
+
+func (s *stepBackend) Read(wait time.Duration) ([]byte, error) {
+	s.waits <- wait
+	select {
+	case c := <-s.in:
+		return c, nil
+	case <-s.woken:
+		return nil, nil
+	}
+}
+
+// A reader with nothing pending waits on input with no limit, so a terminal
+// nobody types at costs no wakeups. A lone ESC, a paste and an exchange with the
+// terminal bound the wait by what is left of theirs; an ask wakes it, and stopping
+// ends it.
+func TestAReaderWaitsOnlyForWhatIsPending(t *testing.T) {
+	s := newStepBackend()
+	r := newInputReader(s)
+	r.pasteMode.Store(true)
+	r.sources, r.write = KeySourceProtocol, func([]byte, bool) bool { return true }
+	r.start()
+	next := func(what string, ok func(time.Duration) bool) {
+		t.Helper()
+		select {
+		case w := <-s.waits:
+			if !ok(w) {
+				t.Fatalf("%s: read waits %v", what, w)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: no read", what)
+		}
+	}
+	unbounded := func(w time.Duration) bool { return w < 0 }
+	next("idle", unbounded)
+	s.in <- []byte("\x1b")
+	next("ESC", func(w time.Duration) bool { return w == escapeWait })
+	s.in <- nil
+	next("Escape sent", unbounded)
+	s.in <- []byte("\x1b[200~ab")
+	next("pasting", func(w time.Duration) bool { return w > 0 && w <= pasteIdle })
+	s.in <- []byte("\x1b[201~")
+	next("pasted", unbounded)
+	r.askKeys(KeyReportReleases, KeySourceProtocol)
+	next("ask taken", func(w time.Duration) bool { return w > protoTimeout/2 && w <= protoTimeout })
+	r.stop()
+	select {
+	case <-r.doneCh:
+	default:
+		t.Fatal("stopping left the reader waiting")
+	}
 }
 
 // ESC ESC is Escape before a paste, in one read or split after the second
