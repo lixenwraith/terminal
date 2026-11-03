@@ -72,10 +72,10 @@ func synced(s string) string {
 	return "\x1b[?2026h\x1b[?25l" + s + "\x1b[0m\x1b[?25l\x1b[?2026l"
 }
 
-// Each color mode writes each kind of color as such a terminal reads it:
-// 16 colors as SGR 30-37/90-97 and 40-47/100-107, restated from a reset
-// since a console's bright colors set bold, a palette index by its shade,
-// the terminal's own as 39/49 in every mode, no color at all in
+// Each color mode writes each kind of color as such a terminal reads it: 16
+// colors as SGR 30-37/90-97 and 40-47/100-107, restated from a reset since a
+// console's bright colors set bold, and a palette index below 16 by those codes
+// in every mode but under bold below 8; the terminal's own as 39/49, no color in
 // ColorModeNone, and elsewhere only what changed from one cell to the next
 func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 	red, yellow := color.RGB{R: 205}, color.RGB{R: 255, G: 255}
@@ -90,7 +90,9 @@ func TestColorModesWriteWhatTheTerminalReads(t *testing.T) {
 		{ColorMode16, []Cell{{Rune: 'x', Fg: color.RGB{R: 9}, Attrs: AttrFg256}, {Rune: 'y', Fg: color.RGB{R: 1}, Attrs: AttrFg256}}, "\x1b[0;91;40mx\x1b[0;31;40my"},
 		{ColorMode256, []Cell{{Rune: 'x', Attrs: AttrFgDefault | AttrBgDefault}}, "\x1b[0;39;49mx"},
 		{ColorMode256, []Cell{{Rune: 'x', Fg: color.RGB{R: 1}, Attrs: AttrFg256}, {Rune: 'y', Fg: color.RGB{R: 1}, Bg: color.RGB{R: 2}, Attrs: AttrFg256 | AttrBg256},
-			{Rune: 'z', Fg: color.RGB{R: 3}, Bg: color.RGB{R: 4}, Attrs: AttrFg256 | AttrBg256}}, "\x1b[0;38;5;1;48;5;16mx\x1b[48;5;2my\x1b[38;5;3;48;5;4mz"},
+			{Rune: 'z', Fg: color.RGB{R: 3}, Bg: color.RGB{R: 4}, Attrs: AttrFg256 | AttrBg256}}, "\x1b[0;31;48;5;16mx\x1b[42my\x1b[33;44mz"},
+		{ColorMode256, []Cell{{Rune: 'x', Fg: color.RGB{R: 1}, Bg: color.RGB{R: 12}, Attrs: AttrFg256 | AttrBg256 | AttrBold},
+			{Rune: 'y', Fg: color.RGB{R: 9}, Bg: color.RGB{R: 196}, Attrs: AttrFg256 | AttrBg256 | AttrBold}}, "\x1b[0;1;38;5;1;104mx\x1b[91;48;5;196my"},
 		{ColorModeTrueColor, []Cell{{Rune: 'x', Fg: color.RGB{R: 1, G: 2, B: 3}, Attrs: AttrBgDefault}}, "\x1b[0;38;2;1;2;3;49mx"},
 		{ColorModeNone, []Cell{{Rune: 'x', Fg: red, Bg: yellow, Attrs: AttrFg256 | AttrUnderline}, {Rune: 'y', Fg: yellow, Attrs: AttrUnderline}}, "\x1b[0;4mxy"},
 	} {

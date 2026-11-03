@@ -396,10 +396,10 @@ func (o *outputBuffer) appendStyle(b []byte, fg, bg color.RGB, attr Attr) []byte
 		fgChanged, bgChanged = true, true
 	}
 	if fgChanged {
-		b = o.appendColor(b, fg, attr&AttrFg256 != 0, attr&AttrFgDefault != 0, 30, attrChanged)
+		b = o.appendColor(b, fg, attr, 30, attrChanged)
 	}
 	if bgChanged {
-		b = o.appendColor(b, bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, attrChanged || fgChanged)
+		b = o.appendColor(b, bg, attr, 40, attrChanged || fgChanged)
 	}
 
 	o.lastFg = fg
@@ -416,11 +416,16 @@ var attrCodes = [...]struct {
 }{{AttrBold, '1'}, {AttrDim, '2'}, {AttrItalic, '3'}, {AttrUnderline, '4'}, {AttrBlink, '5'}, {AttrReverse, '7'}}
 
 // appendColor appends one color's SGR parameters, after a ';' when sep, for
-// base 30 (foreground) or 40 (background): the terminal's own, a palette
-// index, or RGB, as the color mode allows. ColorModeNone appends nothing.
-func (o *outputBuffer) appendColor(b []byte, c color.RGB, palette, deflt bool, base uint8, sep bool) []byte {
+// base 30 (foreground) or 40 (background), as attr says to read it: the
+// terminal's own, a palette index, or RGB, as the color mode allows.
+// ColorModeNone appends nothing.
+func (o *outputBuffer) appendColor(b []byte, c color.RGB, attr Attr, base uint8, sep bool) []byte {
 	if o.colorMode == ColorModeNone {
 		return b
+	}
+	palette, deflt := attr&AttrFg256 != 0, attr&AttrFgDefault != 0
+	if base == 40 {
+		palette, deflt = attr&AttrBg256 != 0, attr&AttrBgDefault != 0
 	}
 	if sep {
 		b = append(b, ';')
@@ -428,15 +433,14 @@ func (o *outputBuffer) appendColor(b []byte, c color.RGB, palette, deflt bool, b
 	switch {
 	case deflt:
 		return appendU8(b, base+9)
+	case o.colorMode == ColorMode16 && palette:
+		return appendANSI16(b, base, color.Xterm256To16(c.R))
 	case o.colorMode == ColorMode16:
-		i := color.RGBTo16(c)
-		if palette {
-			i = paletteTo16(c.R)
-		}
-		if i >= 8 {
-			base += 60 - 8 // bright: 90-97, 100-107
-		}
-		return appendU8(b, base+i)
+		return appendANSI16(b, base, color.RGBTo16(c))
+	case palette && c.R < 16 && (c.R >= 8 || base == 40 || attr&AttrBold == 0):
+		// The theme's sixteen in fewer bytes; a bold foreground below 8 keeps
+		// 38;5, as a terminal drawing bold bright may brighten 30-37 alone
+		return appendANSI16(b, base, c.R)
 	case palette:
 		b = append(appendU8(b, base+8), ";5;"...)
 		return appendU8(b, c.R)
@@ -448,6 +452,15 @@ func (o *outputBuffer) appendColor(b []byte, c color.RGB, palette, deflt bool, b
 	}
 	b = append(appendU8(b, base+8), ";5;"...)
 	return appendU8(b, RGBTo256(c))
+}
+
+// appendANSI16 appends ANSI 16 index i as its SGR code over base: 30-37 and
+// 90-97, or 40-47 and 100-107
+func appendANSI16(b []byte, base, i uint8) []byte {
+	if i >= 8 {
+		base += 60 - 8
+	}
+	return appendU8(b, base+i)
 }
 
 func (o *outputBuffer) forceFullRedraw() {
@@ -462,7 +475,7 @@ func (o *outputBuffer) forceFullRedraw() {
 // AttrBgDefault or AttrBg256 saying how to read it
 func (o *outputBuffer) clear(bg color.RGB, attr Attr) {
 	b := append(o.buf, csiSGR0...)
-	b = o.appendColor(append(b, csi...), bg, attr&AttrBg256 != 0, attr&AttrBgDefault != 0, 40, false)
+	b = o.appendColor(append(b, csi...), bg, attr, 40, false)
 	o.buf = append(append(b, 'm'), csiClear...)
 
 	o.lastValid = false

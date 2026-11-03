@@ -153,7 +153,10 @@ colors:
 - With `AttrFg256` / `AttrBg256` set, `Fg.R` / `Bg.R` holds an xterm-256
   palette index directly and `G`/`B` are ignored. This allows exact palette
   output on true color terminals and skips RGB → palette conversion. Indices
-  0-15 are the ANSI 16, which every terminal shows in its own theme's shades.
+  0-15 are the ANSI 16, which every terminal shows in its own theme's shades,
+  and go out as `30-37`/`90-97` and `40-47`/`100-107`, 4 to 5 bytes shorter
+  than `38;5;N`; a bold foreground below 8 keeps `38;5;N`, which a terminal
+  drawing bold as bright may not brighten as it does `30-37`.
 - With `AttrFgDefault` / `AttrBgDefault` set, the color is the terminal's own
   (SGR 39/49), whatever `Fg` / `Bg` hold: an application keeps a light or
   dark terminal's background without knowing which it is.
