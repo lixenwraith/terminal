@@ -70,6 +70,8 @@ passes it to `Flush`. The output buffer diffs against the previously flushed fra
   (a pasted escape, a bidi override, a line separator) is drawn as a space,
   and a rune a terminal draws in no column, in two or in its neighbour's
   cluster (a combining or spacing mark, a wide or emoji rune) as U+FFFD.
+  `OneColumn(r)` reports whether a cell draws `r` as itself, for a host that
+  escapes or replaces the others its own way.
 
 `Sync()` clears the screen and invalidates the front buffer, forcing a full
 redraw — required after any external process writes to the terminal.
