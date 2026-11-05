@@ -274,6 +274,10 @@ func sameStyle(w []uint32, ref, j int) bool {
 	return true
 }
 
+// OneColumn reports whether a cell draws r as itself, in one column; Flush
+// draws any other rune as a space or U+FFFD
+func OneColumn(r rune) bool { return oneColumn(r) == r }
+
 // oneColumn is r as a cell draws it: one glyph in one column, where the
 // terminal draws ambiguous-width runes (box drawing, U+FFFD) narrow
 func oneColumn(r rune) rune {
