@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 )
@@ -73,23 +71,27 @@ func (r Region) boxStyled(line LineType, s Style, totalH, off int) {
 		return
 	}
 	chars := line.runes()
-	edge := func(y int, left, right rune) {
-		r.TextStyled(0, y, string(left), s)
-		r.TextStyled(r.W-1, y, string(right), s)
-	}
 	for y := range r.H {
+		left, right := chars[boxV], chars[boxV]
 		switch c := off + y; {
 		case c < 0 || c >= totalH:
-		case c == 0 || c == totalH-1:
-			left, right := chars[boxTL], chars[boxTR]
-			if c > 0 {
-				left, right = chars[boxBL], chars[boxBR]
-			}
-			r.TextStyled(1, y, strings.Repeat(string(chars[boxH]), max(0, r.W-2)), s)
-			edge(y, left, right)
-		default:
-			edge(y, chars[boxV], chars[boxV])
+			continue
+		case c == 0:
+			left, right = chars[boxTL], chars[boxTR]
+			r.run(1, y, r.W-2, chars[boxH], s)
+		case c == totalH-1:
+			left, right = chars[boxBL], chars[boxBR]
+			r.run(1, y, r.W-2, chars[boxH], s)
 		}
+		r.Cell(0, y, left, s.Fg, s.Bg, s.Attr)
+		r.Cell(r.W-1, y, right, s.Fg, s.Bg, s.Attr)
+	}
+}
+
+// run draws n cells of ch from column x of row y, without building a string
+func (r Region) run(x, y, n int, ch rune, s Style) {
+	for i := range n {
+		r.Cell(x+i, y, ch, s.Fg, s.Bg, s.Attr)
 	}
 }
 
@@ -190,7 +192,7 @@ func (r Region) Frame(title string, th Theme) Region {
 // hint muted at its end. The title keeps its room: the hint is dropped where
 // both do not fit.
 func (r Region) Rule(y int, title, hint string, th Theme) {
-	r.TextStyled(0, y, strings.Repeat(string(th.Glyphs.Line.runes()[boxH]), max(0, r.W)), th.Border)
+	r.run(0, y, r.W, th.Glyphs.Line.runes()[boxH], th.Border)
 	if title != "" && r.W > 6 {
 		title = " " + Truncate(title, r.W-6) + " "
 		r.TextStyled(2, y, title, th.Text)
