@@ -28,7 +28,8 @@ active live block erases, prints, and redraws in one flush.
 
 ### Printer
 
-- `New(w io.Writer) *Printer`: a printer, safe for concurrent use. Its output is
+- `New(w io.Writer) *Printer`: a printer, safe for concurrent use but for
+  `SetColor`, which races a `Paint` on another goroutine. Its output is
   a terminal when `w` is an `*os.File` on one; a terminal that reports no size,
   a serial line, is still one, at 80×24. Color defaults on for a terminal with
   `NO_COLOR` unset and `TERM` not `dumb`.
@@ -42,7 +43,7 @@ active live block erases, prints, and redraws in one flush.
   color mode, or unchanged when color is off.
 - `SetColor(on bool)`: overrides color detection, to force styling into a pipe
   for `less -R`. Affects `Paint` only; `Update` remains terminal-gated.
-- `Size() (w, h int)`: the terminal's dimensions, 80×24 when unknown.
+- `Size() (w, h int)`: the terminal's current dimensions, 80×24 when unknown.
 - `IsTerminal() bool`: whether the output is a terminal.
 
 ### Style

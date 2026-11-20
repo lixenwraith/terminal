@@ -107,9 +107,21 @@ Built for js/wasm, `EmergencyReset(os.Stdout)` still writes its sequences, which
 - Priority: P3
 - Affected files: `cmd/example-keys/main.go`
 
-F2 asks `KeySourceConsole|KeySourceProtocol`, so built for js/wasm its page
-answers presses. Closes with `KeySourceHost` in the ask and a browser page in its
+Its ask for releases, at start and on F2, names
+`KeySourceConsole|KeySourceProtocol`, so built for js/wasm its page answers
+presses. Closes with `KeySourceHost` in the ask and a browser page in its
 header's list.
+
+## `inline`'s `SetColor` races `Paint`
+
+- Priority: P2
+- Affected files: `inline/inline.go` (`Printer.color`), `inline/style.go`
+  (`Paint`)
+
+`SetColor` writes the setting under the printer's lock and `Paint` reads it
+without, so the two on different goroutines race (`go run -race` reports it);
+the README and the `Printer` doc say so. Closes with `color` an `atomic.Bool`
+and that exception dropped from both.
 
 ## Nerd Fonts icon sets
 

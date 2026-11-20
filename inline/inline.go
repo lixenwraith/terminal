@@ -46,7 +46,8 @@ func detectColorMode() colorMode {
 	return colorMode256
 }
 
-// Printer manages styled output and the live block. Safe for concurrent use.
+// Printer manages styled output and the live block. Safe for concurrent use but
+// for SetColor, which races a Paint on another goroutine.
 type Printer struct {
 	mu    sync.Mutex
 	w     *bufio.Writer

@@ -20,7 +20,8 @@ techniques, a bullet each. Delete a note the code has since made impossible.
   module under one is refused (`directory prefix . does not contain modules
   listed in go.work`): `GOWORK=off`, or a `go.work` of its own. Its `go.mod`
   requires no untagged version, which would be fetched and fail, and names the
-  root's `go 1.27.4`: `go 1.27` selects go1.27.0, which the root refuses.
+  root's `go 1.27.4`: `go 1.27` makes an older installed Go select go1.27.0,
+  which the root refuses.
 - `go build` of one command leaves the binary in the working directory
   (`example-tui.exe` for `GOOS=windows`): build `./...`, or pass `-o /dev/null`.
 
