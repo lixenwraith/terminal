@@ -1,7 +1,7 @@
-// Package glyph is a bitmap font of several cell sizes, the software rasterizer that
-// draws a cell grid with one of them (the reference drawer of any graphical host and
-// the fallback of every one) and what a drawer in another runtime paints from: a
-// cell size as one texture, and frames encoded for it.
+// Package glyph is a bitmap font of several cell sizes, its strikes; the software
+// raster that draws a cell grid with one, which a host shows as it is or checks a
+// cell drawer of its own against; and what a drawer in another runtime paints
+// from, a strike as one texture and frames encoded for it, as README.md lays out.
 package glyph
 
 import (

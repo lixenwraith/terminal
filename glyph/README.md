@@ -70,13 +70,19 @@ offset  size             field
 8       cols*w*rows*h*4  RGBA, rows top first, w by h the strike's cell
 ```
 
+A cell drawer is checked with `NewProbe(tex, cols)`: `Probe.Frame`, every glyph
+under each color rule, painted at the strike's size is `Probe.Pixels`, the
+raster's picture of it.
+
 ## Picking a strike
 
 `Font.Cell(density, dp)` is the pixels of a cell `dp` tall on a screen of `density`
 pixels a dp, whole ones at the face's aspect, and the strike that draws it: the
 largest no taller than the cell, so a glyph is stretched up and never down in a
-font whose strikes share one aspect. The largest strike is the face's own size,
-the `dp` of a host that keeps no zoom.
-`Zoom.Scale` steps a zoom and stops at the smallest strike. When a zoom crosses a
-strike, the host makes that strike's `Texture` or `Raster` and hands its encoder to
-`Frames.SetEncoder`: the next frame is whole, in the new slots.
+font whose strikes share one aspect. With no zoom kept, a window draws at the
+face's own size, its largest strike's, and an Android view at
+`android.DefaultCell`. `Zoom.Scale` steps a zoom within its range and stops at
+the smallest strike; the zero `Zoom` keeps the cell. When a zoom crosses a
+strike, the host makes that strike's `Texture` or `Raster`, and one whose drawer
+runs elsewhere hands its encoder to `Frames.SetEncoder`: the next frame is whole,
+in the new slots.

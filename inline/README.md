@@ -28,28 +28,33 @@ active live block erases, prints, and redraws in one flush.
 
 ### Printer
 
-| Method | Description |
-|---|---|
-| `New(w io.Writer) *Printer` | Creates a printer. Terminal detection via size probe; color defaults on for terminals with `NO_COLOR` unset and `TERM` not `dumb`. Safe for concurrent use. |
-| `Log(format string, a ...any)` | Prints one permanent line above the live block (`Printf` semantics, newline appended). |
-| `Update(lines ...string)` | Replaces the live block, rewriting in place. No-op on non-terminal output. |
-| `Done(final ...string)` | Erases the live block and prints final permanent lines. Call before exit. |
-| `Paint(s string, st Style) string` | Returns `s` wrapped in SGR codes for the detected color mode, or unchanged when color is off. |
-| `SetColor(on bool)` | Overrides color detection (e.g. force styling into a pipe for `less -R`). Affects `Paint` only; `Update` remains terminal-gated. |
-| `Size() (w, h int)` | Current terminal dimensions, 80×24 when unknown. |
-| `IsTerminal() bool` | Whether the output is a terminal. |
+- `New(w io.Writer) *Printer`: a printer, safe for concurrent use. Its output is
+  a terminal when `w` is an `*os.File` on one; a terminal that reports no size,
+  a serial line, is still one, at 80×24. Color defaults on for a terminal with
+  `NO_COLOR` unset and `TERM` not `dumb`.
+- `Log(format string, a ...any)`: prints one permanent line above the live block
+  (`Printf` semantics, newline appended).
+- `Update(lines ...string)`: replaces the live block, rewriting in place; a no-op
+  on non-terminal output.
+- `Done(final ...string)`: erases the live block and prints final permanent
+  lines. Call before exit.
+- `Paint(s string, st Style) string`: `s` wrapped in SGR codes for the detected
+  color mode, or unchanged when color is off.
+- `SetColor(on bool)`: overrides color detection, to force styling into a pipe
+  for `less -R`. Affects `Paint` only; `Update` remains terminal-gated.
+- `Size() (w, h int)`: the terminal's dimensions, 80×24 when unknown.
+- `IsTerminal() bool`: whether the output is a terminal.
 
 ### Style
 
-Value type, zero value is unstyled, builder-composable:
+A value type, unstyled at its zero value, composed by its builders:
 
-| Function | Description |
-|---|---|
-| `Fg(c color.RGB) Style` | Starts a style with foreground color. |
-| `FgANSI(i uint8) Style` | Starts a style with an ANSI 16 foreground (`color.ANSIRed`..). |
-| `(s Style) Bg(c color.RGB) Style` | Adds background color. |
-| `(s Style) BgANSI(i uint8) Style` | Adds an ANSI 16 background. |
-| `(s Style) Bold() Style` | Adds bold attribute (also: `Dim`, `Italic`, `Underline`, `Blink`, `Reverse`). |
+- `Fg(c color.RGB) Style`, `FgANSI(i uint8) Style`: a style with a foreground,
+  an ANSI 16 one for `FgANSI` (`color.ANSIRed`..).
+- `(s Style) Bg(c color.RGB) Style`, `(s Style) BgANSI(i uint8) Style`: adds a
+  background, or an ANSI 16 one.
+- `(s Style) Bold() Style`: adds bold; also `Dim`, `Italic`, `Underline`,
+  `Blink` and `Reverse`.
 
 ```go
 warn := inline.Fg(color.Amber).Bold()
@@ -58,8 +63,8 @@ p.Log("%s low disk space", p.Paint("warning:", warn))
 
 True color terminals get `38;2;R;G;B`; 256-color terminals get `38;5;N` via
 Redmean mapping dynamically handled by the `color` package; 16-color terminals
-(`TERM` of `linux`, `cons25*`, `vt*`, `ansi` or `*-16color`, whatever
-`COLORTERM` says) get the nearest ANSI index.
+(`TERM` of `linux`, `cons25*`, `vt` and a digit, `ansi` or `*-16color`,
+whatever `COLORTERM` says) get the nearest ANSI index.
 
 ANSI 16 colors (`FgANSI`, `BgANSI`) are sent as `30-37`/`90-97` in every mode:
 the terminal's theme picks the shade, and a text console renders them as
@@ -74,11 +79,10 @@ p.Log("%s disk full", p.Paint("ERROR", errSt))
 
 Pure string builders, no Printer required:
 
-| Function | Description |
-|---|---|
-| `Bar(width int, pct float64, chars [3]rune) string` | Progress bar of `width` cells, `pct` clamped to [0,1], half-cell resolution via the partial rune. |
-| `BarBlock` | Default character set `[3]rune{'█', '▌', '░'}`. |
-| `Spinner(frame int) string` | Braille spinner frame for a monotonic counter. |
+- `Bar(width int, pct float64, chars [3]rune) string`: a progress bar of `width`
+  cells, `pct` clamped to [0,1], half-cell resolution via the partial rune.
+- `BarBlock`: the default characters, `[3]rune{'█', '▌', '░'}`.
+- `Spinner(frame int) string`: the braille spinner frame for a monotonic counter.
 
 Compose with `Paint` for colored bars:
 

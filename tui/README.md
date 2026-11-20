@@ -66,6 +66,8 @@ for {
         w, h = ev.Width, ev.Height
         cells = make([]terminal.Cell, w*h)
         list.SetVisible(h - 2)
+    case terminal.EventClosed: // a window's close button
+        return
     }
 }
 ```
@@ -180,7 +182,7 @@ items := make([]tui.ListItem, 0, len(files))
 for _, f := range files {
     items = append(items, tui.ListItem{
         Icon: '▸', IconFg: color.Amber,
-        Text: f.Name, TextStyle: tui.Style{Fg: terminal.LightGray},
+        Text: f.Name, TextStyle: tui.Style{Fg: color.LightGray},
     })
 }
 r.List(items, state.Selection, state.Offset, tui.ListOpts{CursorBg: color.DarkSlate})
@@ -217,7 +219,7 @@ content := dlg.Modal(tui.ModalOpts{
     Title:    "Settings",
     Border:   tui.LineDouble,
     BorderFg: color.SteelBlue,
-    TitleFg:  terminal.White,
+    TitleFg:  color.White,
     Bg:       color.DarkSlate,
 })
 content.TextBlock(0, 0, body, fg, color.DarkSlate, terminal.AttrNone)

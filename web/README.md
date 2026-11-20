@@ -12,20 +12,26 @@ What a program built on this module for js/wasm runs in. The Go half is
 
 ## Build a page
 
-    mkdir site && cp web/index.html web/page.css web/page.js web/worker.js site/
+From a checkout of this module, `cmd/example-tui`'s page:
+
     GOOS=js GOARCH=wasm go build -o site/app.wasm ./cmd/example-tui
-    cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
+    install -m 0644 web/index.html web/page.css web/page.js web/worker.js \
+        "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
     python3 -m http.server -d site
 
-`wasm_exec.js` is the loader of the Go that built the binary: copy it at each
-build. Any static server does, over HTTP: a `file:` page starts no Worker.
-`index.html` runs `app.wasm` at once and shows a failure or the program's exit as
-text. A browser has no files, so `cmd/example-tui` browses its own source there.
+A program in a module of its own takes `web/`'s four from the module cache, at
+the version it builds with, as the root README's
+[In a browser](../README.md#in-a-browser) does. `wasm_exec.js` is the loader of
+the Go that built the binary: copy it at each build, with `install -m 0644`,
+since a toolchain Go fetched keeps its files read-only. Any static server does,
+over HTTP: a `file:` page starts no Worker. `index.html` runs `app.wasm` at once
+and shows a failure or the program's exit as text. A browser has no files, so
+`cmd/example-tui` browses its own source there.
 
 A program needs nothing for this: `terminal.New()` opens the page. `OpenPage` and
-the `Page*` functions (the root README's Browser section) are for one that wants
-its own font, zoom or messages. A page of one's own keeps `page.js` and
-`worker.js` as they are and writes its script against what follows.
+the `Page*` functions ([Browser](../README.md#browser) in the root README) are
+for one that wants its own font, zoom or messages. A page of one's own keeps
+`page.js` and `worker.js` as they are and writes its script against what follows.
 
 ## TerminalPage.open(options)
 
