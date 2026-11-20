@@ -2,8 +2,8 @@ github.com/ebitengine/purego v0.11.3 h1:OB+JLpdm7ioymhyA+6s5kbb/uOuYycAgL8NNTFc5
 github.com/ebitengine/purego v0.11.3/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
 github.com/lixenwraith/color v0.1.5 h1:GRT4PBb9R04ahXW7SGlsfDttqew8E2lgt9GGujL0jEo=
 github.com/lixenwraith/color v0.1.5/go.mod h1:L/I3Vxp6pqslAIzWyZGgKCm2lyStHCA4vKaUoMUm7bU=
-github.com/lixenwraith/terminal v0.7.0 h1:FAuZ1TTazdQXLqI02QdPhUm4KL3do1gA5FJ69QoijUo=
-github.com/lixenwraith/terminal v0.7.0/go.mod h1:BItgJrBTKqDZwMHZi1YjoLuO+yD9A5QPqa5MZNhyH/Q=
+github.com/lixenwraith/terminal v0.7.1 h1:kyOnYWvQ+e/4Y6es+SVJjLLxIl6l5F/5pOJVozxh+cw=
+github.com/lixenwraith/terminal v0.7.1/go.mod h1:ZwielzwkDazjKryrzrxs9r7RuxfZXL9daxCJytXSldQ=
 golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
 golang.org/x/sys v0.50.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
 golang.org/x/term v0.48.0 h1:G6UU1eiSB8nl3DzeUGt7Mg+2SctI8tPS6Z5/mBt6cOk=

@@ -5,18 +5,6 @@ an item when it lands; this file is not a changelog.
 
 Priorities: P1 is wanted next, P2 is convenient follow-up, P3 is an idea.
 
-## Complete `window/go.sum` once the root version is tagged
-
-- Priority: P1
-- Affected files: `window/go.sum`
-
-`window/go.sum` holds purego's and `x/sys`'s lines alone. The root version its
-`go.mod` requires has no tag yet, so its sum cannot be fetched, and `color`'s and
-`x/term`'s are missing with it: under a workspace nothing reads them, and with
-`GOWORK=off` the module does not build (`missing go.sum entry`). Closes with
-`GOWORK=off go mod tidy` in `window/` once the tag resolves, and the window's
-gates run there without a workspace.
-
 ## Run each host on the real thing
 
 - Priority: P1
