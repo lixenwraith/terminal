@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-visual">
+    <title>terminal</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="page.css">
+</head>
+<body>
+<div id="strip" role="toolbar" aria-label="Keys" hidden>
+    <button type="button" id="kbd" aria-pressed="false">Keyboard</button>
+    <button type="button" data-key="Escape">Esc</button>
+    <button type="button" data-key="Tab">Tab</button>
+    <button type="button" data-key="c" data-mods="4">Ctrl-C</button>
+</div>
+<div id="terminal">
+    <canvas id="screen"></canvas>
+    <textarea id="input" aria-label="Terminal input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+</div>
+<p id="status" role="status">Loading…</p>
+<script src="page.js"></script>
+<script>
+(function() {
+    'use strict';
+    const status = document.getElementById('status');
+    const kbd = document.getElementById('kbd');
+    function say(text) {
+        status.textContent = text;
+        status.hidden = !text;
+    }
+    const page = TerminalPage.open({
+        container: document.getElementById('terminal'),
+        canvas: document.getElementById('screen'),
+        input: document.getElementById('input'),
+        strip: document.getElementById('strip'),
+        wasm: 'app.wasm',
+        on: {
+            progress: function(received, total) {
+                say('Loading… ' + (total ? Math.round(100 * received / total) + '%' : (received >> 10) + ' KB'));
+            },
+            compiling: function() { say('Compiling…'); },
+            frame: function(first) { if (first) say(''); },
+            keyboard: function(up) { kbd.setAttribute('aria-pressed', up); },
+            notice: function(text) { console.info(text); },
+            exit: function(code, reason) {
+                say(code === 0 ? 'The program has exited.' : 'The program stopped: ' + (reason || 'exit code ' + code) + '.');
+            },
+            failed: function(reason) { say('Failed: ' + reason + '.'); },
+        },
+    });
+    kbd.addEventListener('click', function() { page.toggleKeyboard(); });
+})();
+</script>
+</body>
+</html>

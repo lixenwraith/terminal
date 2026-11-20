@@ -2,19 +2,14 @@ package terminal
 
 import "time"
 
-// Backend abstracts platform-specific terminal operations.
-// This interface allows the terminal package to support both
-// native Unix environments and WASM/Browser environments (via xterm.js).
+// Backend is the terminal a Terminal writes bytes to and reads them from: the
+// tty or console New opens, or a caller's own for NewWithBackend
 type Backend interface {
-	// Lifecycle
 	Init() error
 	Fini()
 
-	// Capabilities
 	Size() (width, height int)
 
-	// I/O
-	// Write writes raw bytes to the terminal output.
 	Write(p []byte) error
 
 	// Read blocks until input is available, wait passes or Wake is called, and
@@ -25,7 +20,6 @@ type Backend interface {
 	// Wake makes the Read in progress return, or the next one if none is.
 	Wake()
 
-	// Callbacks
-	// SetResizeHandler registers a callback for terminal resize events.
+	// SetResizeHandler is called once, after Init, with what a new size goes to
 	SetResizeHandler(handler func(width, height int))
 }

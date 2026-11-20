@@ -166,7 +166,12 @@ func newApp(t terminal.Terminal, cwd string) *appState {
 // --- filesystem ------------------------------------------------------------
 
 func readEntries(dir string) ([]entry, error) {
-	des, err := os.ReadDir(dir)
+	f, err := os.Open(dir) // os.ReadDir asks for O_DIRECTORY, which a browser's fs lacks
+	if err != nil {
+		return nil, err
+	}
+	des, err := f.ReadDir(-1)
+	f.Close()
 	if err != nil {
 		return nil, err
 	}

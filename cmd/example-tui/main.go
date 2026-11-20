@@ -1,27 +1,13 @@
-// fv — file voyager: an lf / midnight-commander / xxd hybrid.
-// Demo application for the terminal + tui + color packages.
-//
-// Layout:   [parent dir] [current dir list] [preview: info + text/hex/dir table]
-// Enter on a file opens a fullscreen hex viewer with byte cursor and search.
-//
-// Keys (browse): j/k/arrows move · h/l or ←/→ parent/enter · Enter open
-//
-//	gg/G top/bottom · PgUp/PgDn, Ctrl+D/U page · ~ home · . hidden · s sort
-//	/ live filter (Esc clears) · Space mark · a mark-all · u unmark
-//	y yank paths · r rename · m mkdir · D delete (confirm) · T theme
-//	? help · Ctrl+L redraw · q quit · Q quit + exec $SHELL in last dir
-//
-// Keys (hex):    hjkl/arrows · 0/$ row ends · g/G · PgUp/PgDn · Ctrl+D/U
-//
-//	/ search (hex bytes like "de ad" / "0xdead", or literal text) · n/N cycle
-//	Esc/q back
+// fv, file voyager: an lf / midnight-commander / xxd hybrid, the demo of the
+// terminal, tui and color packages. Three panes: the parent directory, the
+// current one and a preview; Enter on a file opens a hex viewer with a byte
+// cursor and search. ? lists the keys, q quits, Q quits into a shell where it was.
 package main
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/lixenwraith/terminal"
@@ -96,7 +82,7 @@ func main() {
 			sh = "/bin/sh"
 		}
 		if _, err := os.Stat(sh); err == nil {
-			_ = syscall.Exec(sh, []string{sh}, os.Environ()) // no return on success
+			execShell(sh) // no return on success
 		}
 	}
 	fmt.Fprintln(os.Stderr, last)

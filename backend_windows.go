@@ -39,6 +39,8 @@ type windowsBackend struct {
 	resizeDoneCh chan struct{}
 }
 
+func newTerminal(c ColorMode) Terminal { return newTerm(newBackend(), c) }
+
 func newBackend() Backend {
 	return &windowsBackend{
 		stdin:  windows.Handle(os.Stdin.Fd()),

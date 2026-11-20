@@ -34,6 +34,8 @@ type unixBackend struct {
 	resizeDoneCh chan struct{}
 }
 
+func newTerminal(c ColorMode) Terminal { return newTerm(newBackend(), c) }
+
 func newBackend() Backend {
 	return &unixBackend{
 		in:    os.Stdin,

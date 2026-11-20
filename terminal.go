@@ -172,12 +172,11 @@ type termImpl struct {
 // otherwise hold the process at exit
 const finiDrainTimeout = 2 * time.Second
 
-// New creates a new Terminal instance. Without a mode it uses
-// DetectColorMode's, or ColorModeNone when NO_COLOR is set; an explicit mode
-// overrides both, as a --color=always or never would
+// New creates a Terminal on the tty, or in a browser on the page its Init opens.
+// Without a mode it uses DetectColorMode's, or ColorModeNone when NO_COLOR is
+// set; an explicit mode overrides both, as a --color=always or never would,
+// except on a page, which is truecolor
 func New(colorMode ...ColorMode) Terminal {
-	b := newBackend()
-
 	c := DetectColorMode()
 	if len(colorMode) > 0 {
 		c = colorMode[0]
@@ -185,7 +184,7 @@ func New(colorMode ...ColorMode) Terminal {
 		c = ColorModeNone
 	}
 
-	return NewWithBackend(b, c)
+	return newTerminal(c)
 }
 
 // NewWithBackend creates a Terminal over b in color mode c, for a pipe, an
@@ -545,10 +544,10 @@ func (t *termImpl) setMouseModeLocked(mode MouseMode) {
 		o.buf = append(o.buf, csiMouseSGROn...)
 	}
 
-	// xterm, xterm.js, kitty, tmux and Konsole keep one mode, which setting
-	// another replaces and resetting any turns off, and alacritty's and urxvt's
-	// set clears the others: on any change the highest mode wanted is written
-	// last, even when already on
+	// xterm, kitty, tmux and Konsole keep one mode, which setting another
+	// replaces and resetting any turns off, and alacritty's and urxvt's set
+	// clears the others: on any change the highest mode wanted is written last,
+	// even when already on
 	var top MouseMode
 	switch {
 	case mode == oldMode:
