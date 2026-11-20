@@ -510,7 +510,8 @@ one, and the script API a page of one's own is written against.
   are `Event`s, and a pinch is a zoom, which refits the grid. The drawer is the
   application's, in Java or Kotlin: on its own thread it takes the strike's
   texture (`Atlas`, then `AtlasChanged` before each `Take`, which hands over the
-  next strike's once a zoom crosses to it) and paints the frames from it, both as
+  next strike's once a zoom crossed to it and the program drew the zoomed grid,
+  so the drawer repaints once) and paints the frames from it, both as
   [`glyph/README.md`](glyph/README.md) lays them out. `Resize` comes first, before
   the program reads `Size` or a finger lands.
 - `window` — a desktop window as a `Host`, on Linux and FreeBSD: Xlib opens it
@@ -518,6 +519,7 @@ one, and the script API a page of one's own is written against.
   loaded at run time through purego, so the binary keeps `CGO_ENABLED=0`. Ctrl
   with `=`, `-` or the wheel zooms within `Config.Zoom`, and Ctrl with `0` goes
   back to the font's own size. It is a nested module,
-  `github.com/lixenwraith/terminal/window`, tagged `window/vX.Y.Z`, so the root
-  keeps its imports. A FreeBSD build passes
+  `github.com/lixenwraith/terminal/window`, so the root keeps its imports, tagged
+  `window/vX.Y.Z` with every release of the root, which it requires at that
+  version: take both at one number. A FreeBSD build passes
   `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.

@@ -191,11 +191,12 @@ func TestAPinchZoomsTheCellWithinBounds(t *testing.T) {
 	}
 }
 
-// TestAZoomAcrossAStrikeHandsTheDrawerItsTextureOnce: the strike follows the cell,
-// but frames stay encoded for the texture the drawer holds until AtlasChanged
-// hands it the new one, once; the next take is then every cell as that strike's
-// drawer reads them, the raster's pixels too. A zoom within a strike hands nothing.
-func TestAZoomAcrossAStrikeHandsTheDrawerItsTextureOnce(t *testing.T) {
+// TestAZoomAcrossAStrikeHandsTheDrawerItsTextureWithTheZoomedGrid: frames stay
+// encoded for the texture the drawer holds until the program drew the zoomed grid;
+// AtlasChanged then hands the new strike's over, once, and the next take is that
+// grid's every cell as its drawer reads them, the raster's pixels too, so the grid
+// is repainted once. A zoom within a strike hands nothing.
+func TestAZoomAcrossAStrikeHandsTheDrawerItsTextureWithTheZoomedGrid(t *testing.T) {
 	strikes := atlas.Hack().Strikes()
 	small, face := strikes[0], strikes[len(strikes)-1]
 	cells := make([]terminal.Cell, 4*2)
@@ -208,30 +209,31 @@ func TestAZoomAcrossAStrikeHandsTheDrawerItsTextureOnce(t *testing.T) {
 	for _, raster := range []bool{false, true} {
 		v := testView(raster, 1) // 12 dp is the smallest strike's 12 pixels
 		v.Resize(4*small.Width, 2*small.Height)
-		// whole is every cell as the drawer holding a's texture reads them
-		whole := func(a *glyph.Atlas) []byte {
+		// whole is every cell of a grid as the drawer holding a's texture reads them
+		whole := func(a *glyph.Atlas, cols, rows int) []byte {
 			if raster {
-				return glyph.NewRaster(a).Frame(nil, cells, 4, 2, nil)
+				return glyph.NewRaster(a).Frame(nil, cells[:cols*rows], cols, rows, nil)
 			}
-			return glyph.NewTexture(a).Frame(nil, cells, 4, 2, nil)
+			return glyph.NewTexture(a).Frame(nil, cells[:cols*rows], cols, rows, nil)
 		}
 		holds := func(a *glyph.Atlas) bool { return bytes.Equal(v.Atlas(), glyph.NewTexture(a).Bytes()) }
 
 		v.Flush(cells, 4, 2)
-		if got := v.Take(); !bytes.Equal(got, whole(small)) || !holds(small) || v.AtlasChanged() != nil {
+		if got := v.Take(); !bytes.Equal(got, whole(small, 4, 2)) || !holds(small) || v.AtlasChanged() != nil {
 			t.Fatalf("raster %v: a view of %d px cells does not open on that strike", raster, small.Height)
 		}
-		v.Zoom(2)
+		v.Zoom(2) // the pixels now hold 2x1 cells of the face's strike
 		v.Sync()
 		v.Flush(cells, 4, 2)
-		if got := v.Take(); !bytes.Equal(got, whole(small)) || !holds(small) {
-			t.Fatalf("raster %v: a frame taken before the drawer has the new texture is not the old strike's", raster)
+		if v.AtlasChanged() != nil || !bytes.Equal(v.Take(), whole(small, 4, 2)) || !holds(small) {
+			t.Fatalf("raster %v: the new strike was handed over before the program drew the zoomed grid", raster)
 		}
+		v.Flush(cells, 2, 1)
 		if got := v.AtlasChanged(); !holds(face) || !bytes.Equal(got, v.Atlas()) || v.AtlasChanged() != nil {
 			t.Fatalf("raster %v: a zoom to %d px cells did not hand over that strike once", raster, face.Height)
 		}
-		if got := v.Take(); !bytes.Equal(got, whole(face)) {
-			t.Fatalf("raster %v: the take after the hand-over is not every cell in the new strike", raster)
+		if got := v.Take(); !bytes.Equal(got, whole(face, 2, 1)) || v.Take() != nil {
+			t.Fatalf("raster %v: the take after the hand-over is not the zoomed grid's every cell in the new strike, once", raster)
 		}
 		if v.Zoom(1.25); v.AtlasChanged() != nil || v.Take() != nil {
 			t.Fatalf("raster %v: a zoom within the %d px strike changed the drawer's texture", raster, face.Height)

@@ -59,6 +59,7 @@ type View struct {
 
 	mu           sync.Mutex
 	cols, rows   int            // the grid the view's pixels hold
+	drawn        [2]int         // the grid of the newest frame the program flushed
 	w, h         int            // those pixels, 0 until the first Resize
 	cell         float64        // the zoom: a cell's height in dp, 0 for DefaultCell
 	cellW, cellH int            // the pixels a cell takes at least, sized by the density and the zoom
@@ -102,14 +103,23 @@ func (v *View) Atlas() []byte {
 	return v.tex.Bytes()
 }
 
-// AtlasChanged is Atlas once after a zoom crossed to another strike, nil otherwise.
-// The drawer's thread calls it before each Take and paints from what it returns:
-// the frames switch to that strike in the same call, the next one every cell, so
-// none is ever encoded for a texture the drawer does not hold.
+// Flush keeps a frame for the drawer and notes its grid, which AtlasChanged waits on
+func (v *View) Flush(cells []terminal.Cell, width, height int) {
+	v.Frames.Flush(cells, width, height)
+	v.mu.Lock()
+	v.drawn = [2]int{width, height}
+	v.mu.Unlock()
+}
+
+// AtlasChanged is Atlas once after a zoom crossed to another strike and the program
+// drew the zoomed grid, nil otherwise. The drawer's thread calls it before each Take
+// and paints from what it returns: the frames switch to that strike in the same
+// call, the next one every cell, so none is encoded for a texture the drawer does
+// not hold, and the drawer never repaints the grid the zoom left in the new strike.
 func (v *View) AtlasChanged() []byte {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.strike == v.tex.Atlas() {
+	if v.strike == v.tex.Atlas() || v.drawn != [2]int{v.cols, v.rows} {
 		return nil
 	}
 	v.tex = glyph.NewTexture(v.strike)
