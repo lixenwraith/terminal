@@ -4,8 +4,9 @@ draws a cell grid with, and hack.woff2 the same glyphs as a web font, which a
 page draws one with. tool/font-atlas/font-atlas.py makes both from the
 project's Hack-Regular.ttf, the first by rendering each glyph at each size and
 the second by leaving out the glyphs no cell draws, the layout features and
-the hinting, and a program that imports this package embeds them. The font
-carries the notice
+the hinting, and a program that imports this package embeds them. hack.bin
+holds one glyph more, the diamond suit U+2666, which the tool draws and no font
+supplied. The font carries the notice
 
     Copyright (c) 2018 Source Foundry Authors / Copyright (c) 2003 by
     Bitstream, Inc. All Rights Reserved.

@@ -30,6 +30,10 @@ fraction of a pixel, to where its lines fall on whole pixels. After a change to
 `STRIKES`, review the diff of `dump` before and after: the test checks six lines
 and the full block, and the eye the rest.
 
+One glyph is the tool's own: the diamond suit, U+2666, which a text console's
+font holds and Hack lacks, drawn as a rhombus so a program's glyph can be one on
+every screen. It is in `hack.bin` alone: a page takes it from a font of its own.
+
 The bits are FreeType's, so another Pillow may round a pixel the other way; the
 files in `atlas` came from Pillow 12.3.0 (FreeType 2.14.3), fontTools 4.68.0 and
 brotli 1.2.1.

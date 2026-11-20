@@ -125,6 +125,21 @@ def render(font: ImageFont.FreeTypeFont, ch: str, width: int, height: int, thres
     return img.point(lambda v: 255 * (v >= threshold), "1").tobytes()
 
 
+# The diamond suit: a text console's font holds it and Hack does not, so the tool
+# draws it, for a program whose glyph must be one on every screen
+DIAMOND = 0x2666
+
+
+def diamond(width: int, height: int) -> bytes:
+    """The suit as a rhombus about the cell's middle, in render's form"""
+    img = Image.new("1", (width, height), 0)
+    cx, cy, hw, hh = (width - 1) / 2, (height - 1) / 2, 0.42 * width, 0.3 * height
+    for y in range(height):
+        for x in range(width):
+            img.putpixel((x, y), int(abs(x - cx) / hw + abs(y - cy) / hh <= 1))
+    return img.tobytes()
+
+
 def pack(ttf: bytes, runes: list[int]) -> bytes:
     """The font file of glyph's README: the face's name, the runes, then each strike"""
     name = " ".join(filter(None, face(ttf, 20).getname())).encode()
@@ -135,6 +150,9 @@ def pack(ttf: bytes, runes: list[int]) -> bytes:
         text, lines = face(ttf, strike.text.size), face(unhinted(ttf, strike.shift), strike.lines.size)
         out += struct.pack("<HH", strike.width, strike.height)
         for c in runes:
+            if c == DIAMOND:
+                out += diamond(strike.width, strike.height)
+                continue
             font, draw = (lines, strike.lines) if c in LINES else (text, strike.text)
             out += render(font, chr(c), strike.width, strike.height, draw.threshold)
     return bytes(out)
@@ -159,10 +177,11 @@ def bake(args: argparse.Namespace) -> None:
     ttf = source(args.font, Path(args.cache))
     runes = code_points(ttf)
     out = Path(args.out)
-    for name, data in (("hack.bin", pack(ttf, runes)), ("hack.woff2", web(ttf, runes))):
+    drawn = sorted({*runes, DIAMOND})
+    for name, data in (("hack.bin", pack(ttf, drawn)), ("hack.woff2", web(ttf, runes))):
         (out / name).write_bytes(data)
         print(f"{out / name}: {len(data)} bytes")
-    print(f"{len(runes)} glyphs at " + " ".join(f"{s.width}x{s.height}" for s in STRIKES))
+    print(f"{len(drawn)} glyphs at " + " ".join(f"{s.width}x{s.height}" for s in STRIKES))
 
 
 def dump(args: argparse.Namespace) -> None:
