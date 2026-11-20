@@ -1,0 +1,12 @@
+module github.com/lixenwraith/terminal/window
+
+go 1.27.2
+
+require (
+	github.com/ebitengine/purego v0.11.3
+	github.com/lixenwraith/color v0.1.5
+	github.com/lixenwraith/terminal v0.7.0
+	golang.org/x/sys v0.50.0
+)
+
+require golang.org/x/term v0.47.0 // indirect
