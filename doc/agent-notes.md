@@ -19,7 +19,8 @@ techniques, a bullet each. Delete a note the code has since made impossible.
 - Go takes the `go.work` of any directory above the one it runs in, so a scratch
   module under one is refused (`directory prefix . does not contain modules
   listed in go.work`): `GOWORK=off`, or a `go.work` of its own. Its `go.mod`
-  requires no untagged version, which would be fetched and fail.
+  requires no untagged version, which would be fetched and fail, and names the
+  root's `go 1.27.4`: `go 1.27` selects go1.27.0, which the root refuses.
 - `go build` of one command leaves the binary in the working directory
   (`example-tui.exe` for `GOOS=windows`): build `./...`, or pass `-o /dev/null`.
 
@@ -40,6 +41,11 @@ techniques, a bullet each. Delete a note the code has since made impossible.
   `pagekeys.go` prefixes its own (`pageKey`, `pageMods`) because
   `keyconsole_test.go` already has a `keyEvent`.
 - `node --check a.js b.js` checks `a.js` alone: one call a file.
+- A recipe for a program in its own module builds before `go list -m -f
+  '{{.Dir}}'`: the `Dir` is empty until something has downloaded the module, which
+  an empty `GOMODCACHE` shows. It copies with `install -m 0644`: a toolchain Go
+  fetched keeps `wasm_exec.js` 0444, and as root `cp` overwrites it all the same,
+  so a second `cp` that passes here fails for a user.
 - The page is driven headless with Playwright's Chromium. Wrapping `Worker`
   records the messages both ways; an `EventTarget` in place of
   `window.visualViewport` plays a soft keyboard; a `getContext('webgl')` that

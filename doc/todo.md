@@ -36,7 +36,9 @@ up as it is: a rune `Flush` draws as U+FFFD (a wide or emoji rune, a combining
 mark) is a blank cell on a `Raster` and has no slot in a `Texture`. A page is
 not affected: `RuneFrame` sends U+FFFD and its fallback fonts draw it. Closes
 with a glyph for U+FFFD made by the tool in each strike, and the raster and the
-texture drawing the rune `Flush` would (`oneColumn`, unexported today).
+texture drawing the rune `Flush` would: `OneColumn` says only whether a cell
+draws a rune as itself, and the rune drawn instead, a space or U+FFFD, is
+`oneColumn`'s, unexported.
 
 ## A host draws no cursor
 
@@ -99,6 +101,15 @@ in `atlas`'s tests, and a map in `Texture` if the search shows there.
 
 Built for js/wasm, `EmergencyReset(os.Stdout)` still writes its sequences, which
 `wasm_exec.js` prints to the console as text. Closes with it doing nothing there.
+
+## `cmd/example-keys` asks no host for releases
+
+- Priority: P3
+- Affected files: `cmd/example-keys/main.go`
+
+F2 asks `KeySourceConsole|KeySourceProtocol`, so built for js/wasm its page
+answers presses. Closes with `KeySourceHost` in the ask and a browser page in its
+header's list.
 
 ## Nerd Fonts icon sets
 

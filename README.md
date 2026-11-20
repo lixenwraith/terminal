@@ -40,7 +40,8 @@ func main() {
         msg := "hello" // ASCII: len is its width in cells
         for i, ch := range msg {
             cells[(h/2)*w+(w-len(msg))/2+i] = terminal.Cell{
-                Rune: ch, Fg: color.Amber, Bg: color.Gunmetal, Attrs: terminal.AttrBold,
+                Rune: ch, Fg: color.Amber, Bg: color.Gunmetal,
+                Attrs: terminal.AttrBold,
             }
         }
         term.Flush(cells, w, h)
@@ -53,7 +54,7 @@ func main() {
         case terminal.EventResize:
             w, h = ev.Width, ev.Height
             cells = make([]terminal.Cell, w*h)
-        case terminal.EventClosed: // a window closed
+        case terminal.EventClosed: // a window's close button
             return
         }
     }
@@ -69,8 +70,8 @@ by any static server (a `file:` page starts no Worker):
 ```sh
 GOOS=js GOARCH=wasm go build -o site/app.wasm .
 web=$(go list -m -f '{{.Dir}}' github.com/lixenwraith/terminal)/web
-install -m 0644 "$web"/index.html "$web"/page.css "$web"/page.js "$web"/worker.js \
-    "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
+install -m 0644 "$web"/index.html "$web"/page.css "$web"/page.js \
+    "$web"/worker.js "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
 python3 -m http.server -d site
 ```
 
@@ -92,7 +93,9 @@ go get github.com/lixenwraith/terminal/window@latest
 //go:build linux || freebsd
 
 // imports github.com/lixenwraith/terminal/atlas and .../terminal/window
-win, err := window.Open(window.Config{Title: "hello", Font: atlas.Hack(), Cols: 80, Rows: 24})
+win, err := window.Open(window.Config{
+    Title: "hello", Font: atlas.Hack(), Cols: 80, Rows: 24,
+})
 if err != nil {
     panic(err)
 }
@@ -100,10 +103,13 @@ term := terminal.NewWithHost(win) // in place of terminal.New()
 ```
 
 `CGO_ENABLED=0 go build` builds it: Xlib, EGL and GLES 2 are loaded at run time
-(`libX11.so.6`, `libEGL.so.1`, `libGLESv2.so.2`; Mesa has the last two). A
-FreeBSD build adds `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.
+(`libX11.so.6`, `libEGL.so.1`, `libGLESv2.so.2`, the last two from Mesa or a GPU
+vendor's driver). A FreeBSD build adds
+`-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.
 The package builds for Linux and FreeBSD alone, so a program built for other
-targets too opens the window in a file under that constraint.
+targets too opens the window in a file under that constraint. Ctrl with `=`, `-`
+or the wheel zooms once `Config.Zoom` names a range, as
+`glyph.Zoom{Least: 4, Most: 40, Step: 0.5}` does.
 
 ### On Android
 
@@ -120,7 +126,7 @@ and paints its frames in Java or Kotlin from the strike's texture, as
 - Double-buffered output with cell-level diffing — only changed cells emit sequences
 - Raw stdin parsing, without allocation for common input: keys, modifiers, UTF-8
   runes, SGR mouse, resize, bracketed paste
-- Draws on the controlling terminal when stdin or stdout is redirected (Unix)
+- Draws on the terminal itself when stdin or stdout is redirected
 - Perceptual (Redmean) RGB → 256-palette mapping via O(1) LUT, from `color`
 - Panic-safe terminal restoration (`Fini`, `EmergencyReset`)
 - Unix and Windows backends behind a common interface, and the same Terminal
@@ -518,9 +524,10 @@ one, and the script API a page of one's own is written against.
   under Node. `WindowSize` reports the page's grid.
 - `OpenPage(PageConfig)` is for a program that wants more of its page: a web font
   handed over as bytes (`Font`; `atlas.HackWeb()` is one), the cell it opens at
-  and the range a zoom keeps to (`Cell`, `CellLeast`, `CellMost`, `CellStep`),
-  and the rows of a bar at the grid's foot that a finger still presses with the
-  pointer off (`BarRows`). The `*Page` is a `Host`, for `NewWithHost`; it also
+  and the range a zoom keeps to (`Cell`, `CellLeast`, `CellMost`, `CellStep`;
+  each 0 for the page's own: a 16 px cell, 4 to 40 in steps of 0.5), and the
+  rows of a bar at the grid's foot that a finger still presses with the pointer
+  off (`BarRows`). The `*Page` is a `Host`, for `NewWithHost`; it also
   reports the rows a soft keyboard hides (`Covered`) and the zoom the player left
   (`Cell`).
 - A program's own messages go to its page's script with `PagePost(kind, fields)`
@@ -558,9 +565,9 @@ one, and the script API a page of one's own is written against.
 - `window` — a desktop window as a `Host`, on Linux and FreeBSD: Xlib opens it
   and reads its input, and EGL and GLES 2 show what `glyph.Raster` drew, each
   loaded at run time through purego, so the binary keeps `CGO_ENABLED=0`. Ctrl
-  with `=`, `-` or the wheel zooms within `Config.Zoom`, and Ctrl with `0` goes
-  back to the font's own size. It is a nested module,
-  `github.com/lixenwraith/terminal/window`, so the root keeps its imports, tagged
-  `window/vX.Y.Z` with every release of the root, which it requires at that
-  version: take both at one number. [In a desktop window](#in-a-desktop-window)
-  builds it.
+  with `=`, `-` or the wheel zooms within `Config.Zoom` (none at its zero
+  value), and Ctrl with `0` goes back to the font's own size. It is a nested
+  module, `github.com/lixenwraith/terminal/window`, so the root keeps its
+  imports, tagged `window/vX.Y.Z` with every release of the root, which it
+  requires at that version: take both at one number.
+  [In a desktop window](#in-a-desktop-window) builds it.
