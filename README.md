@@ -12,6 +12,107 @@ consoles with VT processing, and three hosts that draw the cells themselves: a
 browser page (js/wasm builds, on a canvas), a desktop window (X11, on Linux and
 FreeBSD) and an Android view.
 
+## Quick start
+
+The program fills a slice of cells, hands it to `Flush` and reads events:
+
+```go
+package main
+
+import (
+    "github.com/lixenwraith/color"
+    "github.com/lixenwraith/terminal"
+)
+
+func main() {
+    term := terminal.New() // color mode auto-detected
+    if err := term.Init(); err != nil {
+        panic(err)
+    }
+    defer term.Fini()
+
+    w, h := term.Size()
+    cells := make([]terminal.Cell, w*h)
+    for {
+        for i := range cells {
+            cells[i] = terminal.Cell{Rune: ' ', Bg: color.Gunmetal}
+        }
+        msg := "hello" // ASCII: len is its width in cells
+        for i, ch := range msg {
+            cells[(h/2)*w+(w-len(msg))/2+i] = terminal.Cell{
+                Rune: ch, Fg: color.Amber, Bg: color.Gunmetal, Attrs: terminal.AttrBold,
+            }
+        }
+        term.Flush(cells, w, h)
+
+        switch ev := term.PollEvent(); ev.Type {
+        case terminal.EventKey:
+            if ev.Key == terminal.KeyEscape || ev.Rune == 'q' {
+                return
+            }
+        case terminal.EventResize:
+            w, h = ev.Width, ev.Height
+            cells = make([]terminal.Cell, w*h)
+        case terminal.EventClosed: // a window closed
+            return
+        }
+    }
+}
+```
+
+### In a browser
+
+Built for js/wasm, the same program runs in a page: `terminal.New()` opens it.
+The page is four files from the module's `web/` and Go's loader, served over HTTP
+by any static server (a `file:` page starts no Worker):
+
+```sh
+GOOS=js GOARCH=wasm go build -o site/app.wasm .
+web=$(go list -m -f '{{.Dir}}' github.com/lixenwraith/terminal)/web
+install -m 0644 "$web"/index.html "$web"/page.css "$web"/page.js "$web"/worker.js \
+    "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
+python3 -m http.server -d site
+```
+
+`index.html` runs `app.wasm` at once. `wasm_exec.js` must come from the Go that
+built the binary: copy it at each build. [Browser](#browser) has what a program
+can ask of its page, and [`web/`](web/README.md) the script API of a page of one's
+own.
+
+### In a desktop window
+
+The window is a module of its own, tagged at the root's version with every
+release; it requires the root at that version, so one `go get` takes both:
+
+```sh
+go get github.com/lixenwraith/terminal/window@latest
+```
+
+```go
+//go:build linux || freebsd
+
+// imports github.com/lixenwraith/terminal/atlas and .../terminal/window
+win, err := window.Open(window.Config{Title: "hello", Font: atlas.Hack(), Cols: 80, Rows: 24})
+if err != nil {
+    panic(err)
+}
+term := terminal.NewWithHost(win) // in place of terminal.New()
+```
+
+`CGO_ENABLED=0 go build` builds it: Xlib, EGL and GLES 2 are loaded at run time
+(`libX11.so.6`, `libEGL.so.1`, `libGLESv2.so.2`; Mesa has the last two). A
+FreeBSD build adds `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.
+The package builds for Linux and FreeBSD alone, so a program built for other
+targets too opens the window in a file under that constraint.
+
+### On Android
+
+`android.NewView` is the Go half of a view: the app binds it (gomobile, for one)
+and paints its frames in Java or Kotlin from the strike's texture, as
+[`glyph`](glyph/README.md) lays them out. The `android` entry in
+[Sub-packages](#sub-packages) has the calls;
+[ViF's app](https://github.com/lixenwraith/vif/tree/main/android) is a whole one.
+
 ## Features
 
 - True color (24-bit), 256-color, ANSI 16-color and colorless output with
@@ -145,56 +246,6 @@ The experiment is Go's and outside the Go 1 promise: a toolchain that changes
 `simd/archsimd` can stop this build until the package follows, and on amd64 it
 also moves the runtime's map hashing onto archsimd. Built without it, nothing
 in the package changes.
-
-## Quick start
-
-```go
-package main
-
-import (
-    "github.com/lixenwraith/color"
-    "github.com/lixenwraith/terminal"
-)
-
-func main() {
-    term := terminal.New() // color mode auto-detected
-    if err := term.Init(); err != nil {
-        panic(err)
-    }
-    defer term.Fini()
-
-    w, h := term.Size()
-    cells := make([]terminal.Cell, w*h)
-
-    for {
-        // Build frame
-        for i := range cells {
-            cells[i] = terminal.Cell{Rune: ' ', Bg: color.Gunmetal}
-        }
-        msg := "hello"
-        for i, ch := range msg {
-            // len(msg) to utf8.RuneCountIdString(msg) for non-ASCII
-            cells[(h/2)*w+(w-len(msg))/2+i] = terminal.Cell{
-                Rune: ch, Fg: color.Amber, Bg: color.Gunmetal,
-                Attrs: terminal.AttrBold,
-            }
-        }
-        term.Flush(cells, w, h)
-
-        // Handle input
-        ev := term.PollEvent()
-        switch ev.Type {
-        case terminal.EventKey:
-            if ev.Key == terminal.KeyEscape || ev.Rune == 'q' {
-                return
-            }
-        case terminal.EventResize:
-            w, h = ev.Width, ev.Height
-            cells = make([]terminal.Cell, w*h)
-        }
-    }
-}
-```
 
 ## Cells and attributes
 
@@ -488,20 +539,10 @@ one, and the script API a page of one's own is written against.
   at several cell sizes (its strikes), the software raster that draws a grid
   with one, and a strike as a texture with the frames encoded for it. Its README
   lays out the font file, the texture and the frames.
-- `atlas` — Hack as such a face, at 6x12, 8x16 and 12x24, and as a web font. The
-  application imports it and hands the face to its renderer, and no renderer
-  imports it, so a binary embeds only the form it names:
-
-  ```go
-  // a window: github.com/lixenwraith/terminal/window
-  win, err := window.Open(window.Config{Font: atlas.Hack(), Cols: 120, Rows: 40})
-  term := terminal.NewWithHost(win) // in place of terminal.New()
-
-  // a page, built for js/wasm
-  page, err := terminal.OpenPage(terminal.PageConfig{Font: atlas.HackWeb()})
-  term := terminal.NewWithHost(page)
-  ```
-
+- `atlas` — Hack as such a face, at 6x12, 8x16 and 12x24 (`Hack`, for a window's
+  `Config.Font` or a view's), and as a web font (`HackWeb`, for
+  `PageConfig.Font`). The application imports it and hands the face to its
+  renderer, and no renderer imports it, so a binary embeds only the form it names.
   Hack comes under the MIT and Bitstream Vera licences:
   [`atlas/LICENSE`](atlas/LICENSE) travels with any binary that embeds the face.
   [`tool/font-atlas`](tool/font-atlas/README.md) regenerates both files.
@@ -521,5 +562,5 @@ one, and the script API a page of one's own is written against.
   back to the font's own size. It is a nested module,
   `github.com/lixenwraith/terminal/window`, so the root keeps its imports, tagged
   `window/vX.Y.Z` with every release of the root, which it requires at that
-  version: take both at one number. A FreeBSD build passes
-  `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.
+  version: take both at one number. [In a desktop window](#in-a-desktop-window)
+  builds it.
