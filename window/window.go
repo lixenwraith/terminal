@@ -1,10 +1,10 @@
 //go:build linux || freebsd
 
 // Package window is a desktop window as a terminal.Host, on X11 under Linux and
-// FreeBSD: Xlib opens it and reads its input, EGL and GLES 2 show the frames
-// glyph.Raster draws, each loaded at run time with purego, so the binary keeps
-// CGO_ENABLED=0. Ctrl with =, - or the wheel zooms within Config.Zoom, and Ctrl
-// with 0 goes back to the font's own size.
+// FreeBSD: Xlib opens it and posts its keys and pointer as terminal events, EGL
+// and GLES 2 show each frame glyph.Raster draws as one texture, each loaded at run
+// time with purego, so the binary keeps CGO_ENABLED=0. Ctrl with =, - or the wheel
+// zooms within Config.Zoom, and Ctrl with 0 goes back to the font's own size.
 package window
 
 import (

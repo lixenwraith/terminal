@@ -63,9 +63,10 @@ func main() {
 
 ### In a browser
 
-Built for js/wasm, the same program runs in a page: `terminal.New()` opens it.
-The page is four files from the module's `web/` and Go's loader, served over HTTP
-by any static server (a `file:` page starts no Worker):
+Built for js/wasm, the same program runs in a page, which the `Init` of
+`terminal.New()`'s Terminal opens. The page is four files from the module's
+`web/` and Go's loader, served over HTTP by any static server (a `file:` page
+starts no Worker):
 
 ```sh
 GOOS=js GOARCH=wasm go build -o site/app.wasm .
@@ -83,7 +84,8 @@ own.
 ### In a desktop window
 
 The window is a module of its own, tagged at the root's version with every
-release; it requires the root at that version, so one `go get` takes both:
+release since v0.7.1; it requires the root at that version, so one `go get`
+takes both:
 
 ```sh
 go get github.com/lixenwraith/terminal/window@latest
@@ -103,20 +105,20 @@ term := terminal.NewWithHost(win) // in place of terminal.New()
 ```
 
 `CGO_ENABLED=0 go build` builds it: Xlib, EGL and GLES 2 are loaded at run time
-(`libX11.so.6`, `libEGL.so.1`, `libGLESv2.so.2`, the last two from Mesa or a GPU
-vendor's driver). A FreeBSD build adds
+(`libX11.so.6`, `libEGL.so.1`, `libGLESv2.so.2`, the last two from libglvnd or
+Mesa). A FreeBSD build adds
 `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.
 The package builds for Linux and FreeBSD alone, so a program built for other
 targets too opens the window in a file under that constraint. Ctrl with `=`, `-`
-or the wheel zooms once `Config.Zoom` names a range, as
+or the wheel zooms once `Config.Zoom` names a range with a step, as
 `glyph.Zoom{Least: 4, Most: 40, Step: 0.5}` does.
 
 ### On Android
 
-`android.NewView` is the Go half of a view: the app binds it (gomobile, for one)
-and paints its frames in Java or Kotlin from the strike's texture, as
-[`glyph`](glyph/README.md) lays them out. The `android` entry in
-[Sub-packages](#sub-packages) has the calls;
+`android.NewView` is the Go half of a view: the app binds a Go package of its
+own that calls it (gomobile, for one), and paints its frames in Java or Kotlin
+from the strike's texture, as [`glyph`](glyph/README.md) lays them out. The
+`android` entry in [Sub-packages](#sub-packages) has the drawer's calls;
 [ViF's app](https://github.com/lixenwraith/vif/tree/main/android) is a whole one.
 
 ## Features
@@ -522,14 +524,14 @@ one, and the script API a page of one's own is written against.
 - `terminal.New()` returns a Terminal whose `Init` opens the page and whose color
   mode is true color whatever was asked; `Init` fails where there is no page, as
   under Node. `WindowSize` reports the page's grid.
-- `OpenPage(PageConfig)` is for a program that wants more of its page: a web font
-  handed over as bytes (`Font`; `atlas.HackWeb()` is one), the cell it opens at
-  and the range a zoom keeps to (`Cell`, `CellLeast`, `CellMost`, `CellStep`;
-  each 0 for the page's own: a 16 px cell, 4 to 40 in steps of 0.5), and the
-  rows of a bar at the grid's foot that a finger still presses with the pointer
-  off (`BarRows`). The `*Page` is a `Host`, for `NewWithHost`; it also
-  reports the rows a soft keyboard hides (`Covered`) and the zoom the player left
-  (`Cell`).
+- `OpenPage(PageConfig)` is for a program that wants more of its page: a web
+  font handed over as bytes (`Font`; `atlas.HackWeb()` is one), the cell it
+  opens at and the range a zoom keeps to (`Cell`, `CellLeast`, `CellMost`,
+  `CellStep`; each 0 for the page's own: a 16 px cell unless its script names
+  another, 4 to 40 in steps of 0.5), and the rows of a bar at the grid's foot
+  that a finger still presses with the pointer off (`BarRows`). The `*Page` is
+  a `Host`, for `NewWithHost`; it also reports the rows a soft keyboard hides
+  (`Covered`) and the zoom the player left (`Cell`).
 - A program's own messages go to its page's script with `PagePost(kind, fields)`
   (`PageBytes` for a byte slice) and come from it through `page.Handle(kind,
   fn)`. `PageHas` asks what that script handles, `PageKept` and `PageKeep` read
@@ -568,6 +570,6 @@ one, and the script API a page of one's own is written against.
   with `=`, `-` or the wheel zooms within `Config.Zoom` (none at its zero
   value), and Ctrl with `0` goes back to the font's own size. It is a nested
   module, `github.com/lixenwraith/terminal/window`, so the root keeps its
-  imports, tagged `window/vX.Y.Z` with every release of the root, which it
-  requires at that version: take both at one number.
+  imports, tagged `window/vX.Y.Z` with every release of the root since v0.7.1,
+  which it requires at that version: take both at one number.
   [In a desktop window](#in-a-desktop-window) builds it.

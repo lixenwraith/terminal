@@ -71,8 +71,8 @@ offset  size             field
 ```
 
 A cell drawer is checked with `NewProbe(tex, cols)`: `Probe.Frame`, every glyph
-under each color rule, painted at the strike's size is `Probe.Pixels`, the
-raster's picture of it.
+with the color rules taken in turn, painted at the strike's size is
+`Probe.Pixels`, the raster's picture of it.
 
 ## Picking a strike
 

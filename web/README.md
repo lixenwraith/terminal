@@ -28,10 +28,11 @@ over HTTP: a `file:` page starts no Worker. `index.html` runs `app.wasm` at once
 and shows a failure or the program's exit as text. A browser has no files, so
 `cmd/example-tui` browses its own source there.
 
-A program needs nothing for this: `terminal.New()` opens the page. `OpenPage` and
-the `Page*` functions ([Browser](../README.md#browser) in the root README) are
-for one that wants its own font, zoom or messages. A page of one's own keeps
-`page.js` and `worker.js` as they are and writes its script against what follows.
+A program needs nothing for this: `terminal.New()`'s Terminal opens the page at
+`Init`. `OpenPage` and the `Page*` functions ([Browser](../README.md#browser) in
+the root README) are for one that wants its own font, zoom or messages. A page of
+one's own keeps `page.js` and `worker.js` as they are and writes its script
+against what follows.
 
 ## TerminalPage.open(options)
 
