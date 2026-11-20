@@ -1,10 +1,10 @@
 //go:build linux || freebsd
 
-// Package window is a desktop window that draws a terminal cell grid. Xlib opens it
-// and reads its input, EGL and GLES 2 draw the frame, all loaded at run time with
-// purego so the binary keeps CGO_ENABLED=0. glyph.Raster draws each frame and the
-// whole framebuffer is uploaded as one texture; keys and the pointer are posted as
-// the terminal events a terminal would report for them.
+// Package window is a desktop window as a terminal.Host, on X11 under Linux and
+// FreeBSD: Xlib opens it and posts its keys and pointer as terminal events, EGL
+// and GLES 2 show each frame glyph.Raster draws as one texture, each loaded at run
+// time with purego, so the binary keeps CGO_ENABLED=0. Ctrl with =, - or the wheel
+// zooms within Config.Zoom, and Ctrl with 0 goes back to the font's own size.
 package window
 
 import (
@@ -32,7 +32,7 @@ type Config struct {
 	Scale      int
 	// Cell is the zoom the window opens at, a cell's height in dp of Scale pixels,
 	// 0 for the font's own, its largest strike's; Zoom is the range its player's
-	// zoom keeps to
+	// zoom keeps to, the zero Zoom none
 	Cell float64
 	Zoom glyph.Zoom
 	// Maximized or Fullscreen is the state the window opens in, asked of the window
@@ -42,7 +42,8 @@ type Config struct {
 
 // Window is a terminal.Host over an X window. Frames, Sync and the pointer mode
 // may be set from any goroutine; one locked OS thread owns the display and the
-// context.
+// context. Its close button posts terminal.EventClosed and leaves it open: Close,
+// which the Fini of NewWithHost's Terminal calls, closes it.
 type Window struct {
 	font   *glyph.Font
 	own    float64 // the font's own cell height, its largest strike's

@@ -101,9 +101,9 @@ func (r *Raster) draw(cx, cy int, c terminal.Cell) {
 	}
 }
 
-// Probe is a frame of every glyph in the font under each color rule the raster
-// applies, with the raster's pixels for it: the oracle a drawer is checked against,
-// same frame, same pixels
+// Probe is a frame of every glyph in the font, the color rules the raster applies
+// taken in turn, with the raster's pixels for it: the oracle a drawer is checked
+// against, same frame, same pixels
 type Probe struct {
 	tex        *Texture
 	cols, rows int

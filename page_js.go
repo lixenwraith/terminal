@@ -30,8 +30,9 @@ type PageConfig struct {
 	// BarRows is the rows at the grid's foot a finger still presses with the
 	// pointer off, and whose three taps raise or drop the keyboard; 0 for none
 	BarRows int
-	// Cell is a cell's height in CSS pixels the page opens at, 0 for its own;
-	// CellLeast, CellMost and CellStep the range and step a zoom keeps to
+	// Cell is a cell's height in CSS pixels the page opens at, 0 for its own (16
+	// unless its script names another); CellLeast, CellMost and CellStep the range
+	// and step a zoom keeps to, each 0 for the page's own: 4 to 40 in steps of 0.5
 	Cell, CellLeast, CellMost, CellStep float64
 	// Font is a web font (woff2, ttf) the page draws glyphs with, nil for its own
 	Font []byte

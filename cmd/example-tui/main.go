@@ -2,6 +2,8 @@
 // terminal, tui and color packages. Three panes: the parent directory, the
 // current one and a preview; Enter on a file opens a hex viewer with a byte
 // cursor and search. ? lists the keys, q quits, Q quits into a shell where it was.
+// Built for js/wasm it runs in web/'s page, browses its own source, read-only, and
+// Q quits as q does.
 package main
 
 import (
