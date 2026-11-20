@@ -10,6 +10,12 @@ techniques, a bullet each. Delete a note the code has since made impossible.
   (`reading .../go.mod at revision vX.Y.Z: unknown revision`): Go still reads the
   `go.mod` of the version `window/go.mod` requires. In `window/`, `-mod=mod`
   rewrites `go.sum`.
+- A release is two tags on one commit, `vX.Y.Z` and `window/vX.Y.Z`, and
+  `window/go.sum` holds the root's hash at that version: write it last, in a
+  change that touches nothing outside `window/`, which is no part of the root's
+  zip. A version the public proxy has fetched never changes there, so a root
+  edit after that takes the next version, never a moved tag;
+  `proxy.golang.org/cached-only/<module>/@v/<version>.info` says what it holds.
 - Go takes the `go.work` of any directory above the one it runs in, so a scratch
   module under one is refused (`directory prefix . does not contain modules
   listed in go.work`): `GOWORK=off`, or a `go.work` of its own. Its `go.mod`
