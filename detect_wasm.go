@@ -4,14 +4,11 @@ package terminal
 
 import "os"
 
-// DetectColorMode determines terminal color capability from environment
-func DetectColorMode() ColorMode {
-	// Browsers/xterm.js generally support true color
-	return ColorModeTrueColor
-}
+// DetectColorMode is truecolor: a page paints RGB
+func DetectColorMode() ColorMode { return ColorModeTrueColor }
 
-// resetTerminalMode is no-op for WASM; termios does not exist
+// resetTerminalMode has no termios to restore in a browser
 func resetTerminalMode() {}
 
-// controllingTTY is nil: the browser terminal is reached through the bridge
+// controllingTTY is nil: a page is no tty
 func controllingTTY() *os.File { return nil }

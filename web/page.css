@@ -1,0 +1,103 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    overscroll-behavior: none;   /* no pull-to-refresh under a finger */
+    color-scheme: dark;
+}
+
+#terminal {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+#screen {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* The field keys and pasted text arrive through: focused but never seen, and at
+   16px, or iOS zooms in on focus; at the top, so the browser never pans the page
+   to show it above a keyboard. */
+#input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    font-size: 16px;
+    resize: none;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+/* What the page says of its program: loading, a failure, its exit. */
+#status {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 90vw;
+    padding: 0.5em 1em;
+    background: #000;
+    color: #c0c0c0;
+    font: 14px/1.5 monospace;
+    text-align: center;
+    overflow-wrap: anywhere;   /* an exit reason can carry a whole path */
+}
+
+#status[hidden] { display: none; }
+
+/* The key strip, which page.js shows on a touch screen before the first fit, so
+   its height is never the grid's. */
+:root { --strip-h: 32px; }
+
+#strip {
+    display: flex;
+    height: var(--strip-h);
+    background: #1a1a1a;
+    border-bottom: 1px solid #333;
+}
+
+#strip[hidden] { display: none; }
+#strip:not([hidden]) + #terminal { height: calc(100% - var(--strip-h)); }
+
+#strip button {
+    min-width: 44px;
+    padding: 0 10px;
+    border: 0;
+    background: none;
+    color: #c0c0c0;
+    font: 14px/1 monospace;
+}
+
+#strip button:active,
+#strip button[aria-pressed="true"] { background: #333; }
+
+/* Any touch screen: taps never zoom, select or call out. */
+@media (any-pointer: coarse) {
+    html {
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    #terminal,
+    #strip {
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+}

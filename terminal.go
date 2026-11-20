@@ -38,7 +38,6 @@ const (
 	AttrBgColor Attr = AttrBg256 | AttrBgDefault
 )
 
-// Cell represents a single terminal cell
 type Cell struct {
 	Rune  rune
 	Fg    color.RGB
@@ -46,7 +45,16 @@ type Cell struct {
 	Attrs Attr
 }
 
-// Terminal provides low-level terminal access
+// Surface is what a finished frame is handed to: a Terminal, or a host drawing
+// the same cells, a window, a page or a phone's view. Flush must not wait on
+// what draws; a frame held there is dropped for a newer one
+type Surface interface {
+	ColorMode() ColorMode
+	Flush(cells []Cell, width, height int)
+	Sync() // the next frame is drawn whole
+}
+
+// Terminal provides low-level terminal access; it is a Surface
 type Terminal interface {
 	// Init enters raw mode, alternate screen buffer, hides cursor
 	Init() error
@@ -54,13 +62,8 @@ type Terminal interface {
 	// Fini restores terminal state. Safe to call multiple times
 	Fini()
 
-	// Size returns current terminal dimensions
 	Size() (width, height int)
-
-	// ResizeChan returns channel that receives resize events
 	ResizeChan() <-chan ResizeEvent
-
-	// ColorMode returns detected color capability
 	ColorMode() ColorMode
 
 	// Flush hands a frame to the terminal; cells are row-major: cells[y*width + x].
@@ -99,21 +102,33 @@ type Terminal interface {
 	// one EventPaste rather than as keys, so its newlines don't press Enter
 	SetPasteMode(on bool) error
 
-	// SetKeyReport asks for keys to be reported at level report. Releases come
-	// through the first source in allow the terminal has, the console before
-	// the protocol; KeyReportPresses gives up the source in use. It returns at
-	// once, and an EventKeyReport follows with what the terminal reports now,
-	// so a game learns the outcome of every ask; asks the reader has not yet
-	// acted on are answered together, by the latest. A change of source ends
-	// the holds it leaves with Lost releases. Until an ask for releases, nothing
-	// is sent to the terminal or switched.
+	// SetKeyReport asks for keys at level report and returns at once: releases
+	// come through the first source in allow the terminal has, the console before
+	// the protocol, and KeyReportPresses gives the source up. An EventKeyReport
+	// follows with what the terminal reports now, asks not yet acted on answered
+	// together by the latest; a change of source ends the holds it leaves as Lost
 	SetKeyReport(report KeyReport, allow KeySource) error
 }
 
-// ResizeEvent represents a terminal resize
 type ResizeEvent struct {
 	Width  int
 	Height int
+}
+
+// postResize leaves re waiting in ch, in place of an older one nobody read
+func postResize(ch chan ResizeEvent, re ResizeEvent) {
+	select {
+	case ch <- re:
+	default:
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- re:
+		default:
+		}
+	}
 }
 
 // termImpl implements Terminal using the Backend interface
@@ -157,12 +172,11 @@ type termImpl struct {
 // otherwise hold the process at exit
 const finiDrainTimeout = 2 * time.Second
 
-// New creates a new Terminal instance. Without a mode it uses
-// DetectColorMode's, or ColorModeNone when NO_COLOR is set; an explicit mode
-// overrides both, as a --color=always or never would
+// New creates a Terminal on the tty, or in a browser on the page its Init opens.
+// Without a mode it uses DetectColorMode's, or ColorModeNone when NO_COLOR is
+// set; an explicit mode overrides both, as a --color=always or never would,
+// except on a page, which is truecolor
 func New(colorMode ...ColorMode) Terminal {
-	b := newBackend()
-
 	c := DetectColorMode()
 	if len(colorMode) > 0 {
 		c = colorMode[0]
@@ -170,7 +184,7 @@ func New(colorMode ...ColorMode) Terminal {
 		c = ColorModeNone
 	}
 
-	return NewWithBackend(b, c)
+	return newTerminal(c)
 }
 
 // NewWithBackend creates a Terminal over b in color mode c, for a pipe, an
@@ -203,7 +217,6 @@ func (t *termImpl) Init() error {
 		return nil
 	}
 
-	// Initialize backend (raw mode)
 	if err := t.backend.Init(); err != nil {
 		return err
 	}
@@ -211,7 +224,6 @@ func (t *termImpl) Init() error {
 	w, h := t.backend.Size()
 	t.output.resize(w, h)
 
-	// Create input reader wrapping backend
 	t.input = newInputReader(t.backend)
 	t.input.sources = backendKeySources(t.backend)
 	t.input.write = t.keyWrite
@@ -219,22 +231,8 @@ func (t *termImpl) Init() error {
 		t.input.keysRaw, t.input.keysCooked = t.keysRaw, t.keysCooked
 	}
 
-	// Set resize handler on backend
 	t.backend.SetResizeHandler(func(w, h int) {
-		// Non-blocking send to avoid backend blocking
-		select {
-		case t.resizeCh <- ResizeEvent{Width: w, Height: h}:
-		default:
-			// Drain and replace to ensure latest size is pending
-			select {
-			case <-t.resizeCh:
-			default:
-			}
-			select {
-			case t.resizeCh <- ResizeEvent{Width: w, Height: h}:
-			default:
-			}
-		}
+		postResize(t.resizeCh, ResizeEvent{Width: w, Height: h})
 	})
 
 	go t.writeLoop()
@@ -246,7 +244,6 @@ func (t *termImpl) Init() error {
 	o.buf = append(o.buf, csiCursorHide...)
 	o.buf = append(o.buf, csiAutoWrapOff...)
 
-	// Invisible cursor
 	t.cursorVisible.Store(false)
 
 	// Build the LUT at startup, not on the first frame under t.mu
@@ -254,11 +251,9 @@ func (t *termImpl) Init() error {
 		WarmPalette256()
 	}
 
-	// Clear screen
 	t.output.clear(color.RGB{}, AttrBgDefault)
 	t.sendLocked()
 
-	// Start input reader
 	t.input.start()
 
 	t.initialized = true
@@ -321,21 +316,17 @@ func (t *termImpl) Fini() {
 	case <-time.After(finiDrainTimeout):
 	}
 
-	// Backend cleanup
 	t.backend.Fini()
 }
 
-// Size returns current terminal dimensions
 func (t *termImpl) Size() (int, int) {
 	return t.backend.Size()
 }
 
-// ResizeChan returns the resize event channel
 func (t *termImpl) ResizeChan() <-chan ResizeEvent {
 	return t.resizeCh
 }
 
-// ColorMode returns detected color capability
 func (t *termImpl) ColorMode() ColorMode {
 	return t.output.colorMode
 }
@@ -478,21 +469,18 @@ func (t *termImpl) Sync() {
 
 // PollEvent blocks until next input event
 func (t *termImpl) PollEvent() Event {
-	// Check synthetic events first
 	select {
 	case ev := <-t.syntheticCh:
 		return ev
 	default:
 	}
 
-	// Wait for input or resize
 	select {
 	case ev := <-t.syntheticCh:
 		return ev
 	case ev := <-t.input.events():
 		return ev
 	case re := <-t.resizeCh:
-		// We can return resize event directly
 		return Event{
 			Type:   EventResize,
 			Width:  re.Width,
@@ -506,7 +494,6 @@ func (t *termImpl) PostEvent(ev Event) {
 	select {
 	case t.syntheticCh <- ev:
 	default:
-		// Channel full, drop
 	}
 }
 
@@ -557,10 +544,10 @@ func (t *termImpl) setMouseModeLocked(mode MouseMode) {
 		o.buf = append(o.buf, csiMouseSGROn...)
 	}
 
-	// xterm, xterm.js, kitty, tmux and Konsole keep one mode, which setting
-	// another replaces and resetting any turns off, and alacritty's and urxvt's
-	// set clears the others: on any change the highest mode wanted is written
-	// last, even when already on
+	// xterm, kitty, tmux and Konsole keep one mode, which setting another
+	// replaces and resetting any turns off, and alacritty's and urxvt's set
+	// clears the others: on any change the highest mode wanted is written last,
+	// even when already on
 	var top MouseMode
 	switch {
 	case mode == oldMode:
@@ -735,7 +722,6 @@ func EmergencyReset(w io.Writer) {
 	// A frame the crash cut short would hold back what follows until the terminal times out
 	w.Write(csiSyncEnd)
 
-	// Disable mouse tracking
 	w.Write(csiMouseMotionOff)
 	w.Write(csiMouseDragOff)
 	w.Write(csiMouseClickOff)
@@ -746,7 +732,6 @@ func EmergencyReset(w io.Writer) {
 		w.Write(csiFocusOff)
 	}
 
-	// Write sequences to provided writer
 	w.Write(csiCursorShow)
 	w.Write(csiAltScreenExit)
 	w.Write(csiSGR0)

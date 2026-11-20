@@ -3,37 +3,48 @@
 Direct ANSI terminal control for Go with zero-allocation rendering. Built for
 sustained 60fps full-screen redraws in cell-based applications (games, dashboards,
 TUIs). Depends on `github.com/lixenwraith/color` (RGB, palettes, blending),
-`golang.org/x/sys` and `golang.org/x/term`.
+`golang.org/x/sys` and `golang.org/x/term`; the desktop window, a module of its
+own, alone adds `github.com/ebitengine/purego`.
 
 The package bypasses terminfo/termcap entirely and emits ANSI sequences directly.
-Target environments: xterm-compatible terminals on Linux and BSDs, Windows
-consoles with VT processing, and browsers via xterm.js (WASM builds).
+Target environments: xterm-compatible terminals on Linux, macOS and BSDs, Windows
+consoles with VT processing, and three hosts that draw the cells themselves: a
+browser page (js/wasm builds, on a canvas), a desktop window (X11, on Linux and
+FreeBSD) and an Android view.
 
 ## Features
 
 - True color (24-bit), 256-color, ANSI 16-color and colorless output with
   automatic capability detection, and the terminal's own default colors
 - Double-buffered output with cell-level diffing — only changed cells emit sequences
-- Raw stdin parsing: keys, modifiers, UTF-8 runes, SGR mouse, resize, bracketed paste
+- Raw stdin parsing, without allocation for common input: keys, modifiers, UTF-8
+  runes, SGR mouse, resize, bracketed paste
 - Draws on the controlling terminal when stdin or stdout is redirected (Unix)
 - Perceptual (Redmean) RGB → 256-palette mapping via O(1) LUT, from `color`
 - Panic-safe terminal restoration (`Fini`, `EmergencyReset`)
-- Unix, Windows and WASM backends behind a common interface
+- Unix and Windows backends behind a common interface, and the same Terminal
+  over a host that draws the cells itself: a browser page, a window, a phone's view
+- A font for such a host: Hack as bitmaps at three cell sizes and as a web font
 
 ## Architecture
 
     Terminal (interface)
-      └── termImpl
-            ├── outputBuffer   diffing, ANSI generation
-            ├── writeLoop      the one goroutine that writes output
-            ├── inputReader    escape sequence parser, event channel
-            └── Backend (interface)
-                  ├── unixBackend     //go:build unix — termios, unix.Poll, SIGWINCH, /dev/tty
-                  ├── windowsBackend  //go:build windows — console modes, VT processing, CONIN$/CONOUT$
-                  └── wasmBackend     //go:build wasm — syscall/js, xterm.js bridge
+      ├── termImpl
+      │     ├── outputBuffer   diffing, ANSI generation
+      │     ├── writeLoop      the one goroutine that writes output
+      │     ├── inputReader    escape sequence parser, event channel
+      │     └── Backend (interface)
+      │           ├── unixBackend     //go:build unix — termios, unix.Poll, SIGWINCH, /dev/tty
+      │           └── windowsBackend  //go:build windows — console modes, VT processing, CONIN$/CONOUT$
+      └── hostTerm             NewWithHost
+            └── Host (interface)   a screen that draws the cells itself, and its input
+                  ├── Page           //go:build js && wasm — OpenPage: a browser page, syscall/js
+                  ├── android.View   an Android view; the app's drawer takes its frames
+                  └── window.Window  its own module, linux || freebsd — Xlib, EGL, GLES 2
 
 Shared code carries no build tags: cell diffing, ANSI generation, escape parsing.
-Platform specifics are isolated in the `Backend` implementations.
+Platform specifics are isolated in the `Backend` implementations and in the
+hosts.
 
 `NewWithBackend(b, mode)` builds a Terminal over a `Backend` of the caller's
 own: a pipe, an in-process emulator or a test standing in for the tty. It
@@ -41,6 +52,35 @@ behaves as `New`'s Terminal does, the writer goroutine included; `New` is
 `NewWithBackend` over the platform's backend and the detected color mode. Its
 `Read` waits as long as the reader allows, without limit when nothing is
 pending, and `Wake` ends that wait for a stop or a key report ask.
+
+### Hosts
+
+A `Surface` is what a finished frame is handed to (`ColorMode`, `Flush`, `Sync`):
+a Terminal, or a host that draws the same cells itself, as a window, a browser
+page or a phone's view does.
+
+A `Host` is such a screen with its player's input: it also reports its grid
+(`Size`), how long it has held a frame (`Blocked`) and its keys, pointer and
+resizes as `Event`s on a channel, and takes a pointer mode and a key report ask.
+`NewWithHost(h)` makes one a Terminal, so a program written to the interface runs
+on it as it is. `SetMouseMode` becomes the pointer mode and `Clear` a frame of
+blanks; the cursor calls do nothing, a paste is one `EventPaste` whatever the
+paste mode, and `Fini` calls the host's `Close` if it has one.
+
+`HostKeys` is the key report every host shares: presses until a program asks for
+releases (`Ask`), then each key's press, repeats and release paired by the host's
+own code for the key (`Down`, `Up`), a `Tap` for a key with no release to come,
+and `Lost` as focus leaves. Each ask is answered with an `EventKeyReport`.
+
+`Frames` is the `Surface` of a host whose drawer runs elsewhere, a view's thread
+or a page: `Flush` keeps the newest frame, and `Take` encodes the cells changed
+since the frame the drawer holds: nil when none did, every cell after a resize,
+a `Sync` or a `SetEncoder`. `CellFrame` writes little-endian 32-bit words:
+columns, rows and a count, then for each cell its index, an id for its rune, and
+its colors as ARGB from `CellColors` (reverse, dim and a palette index resolved,
+the terminal's own as light grey on black). `RuneFrame`, the default, has the
+rune `Flush` would draw as the id, for a drawer that keeps glyphs of its own;
+[`glyph`](glyph/README.md) has the encoders of one that paints from a bitmap face.
 
 ### Rendering pipeline
 
@@ -408,20 +448,76 @@ terminal has:
 
 `KeyHolds` is the pairing on its own, for a host that reads its platform's key
 events and builds `Event`s itself (`KeySourceHost`): it gives each release its
-press's key and turns the contradictions above into `Lost` releases.
+press's key and turns the contradictions above into `Lost` releases. `HostKeys`
+is such a host's whole report, over it.
 
-A Terminal over a caller's backend (`NewWithBackend`) reports presses.
+A Terminal over a caller's backend (`NewWithBackend`) reports presses; one over a
+host (`NewWithHost`) reports what its host does.
 
-## WASM
+## Browser
 
-WASM builds bridge to xterm.js via JS globals:
+Built for js/wasm, a program runs in a Worker of a web page, which draws its
+cells on a canvas (WebGL, or 2D without it) and reports keys, text, the pointer
+and its size as the events a terminal would. The page's scripts are in
+[`web/`](web/README.md), with a minimal page any program runs in, how to build
+one, and the script API a page of one's own is written against.
 
-    goTerminalWrite(Uint8Array)    // Go → JS terminal output
-    goTerminalInput(Uint8Array)    // JS → Go keyboard input
-    goTerminalResize(cols, rows)   // JS → Go resize
-    xterm.cols, xterm.rows         // initial size query
+- `terminal.New()` returns a Terminal whose `Init` opens the page and whose color
+  mode is true color whatever was asked; `Init` fails where there is no page, as
+  under Node. `WindowSize` reports the page's grid.
+- `OpenPage(PageConfig)` is for a program that wants more of its page: a web font
+  handed over as bytes (`Font`; `atlas.HackWeb()` is one), the cell it opens at
+  and the range a zoom keeps to (`Cell`, `CellLeast`, `CellMost`, `CellStep`),
+  and the rows of a bar at the grid's foot that a finger still presses with the
+  pointer off (`BarRows`). The `*Page` is a `Host`, for `NewWithHost`; it also
+  reports the rows a soft keyboard hides (`Covered`) and the zoom the player left
+  (`Cell`).
+- A program's own messages go to its page's script with `PagePost(kind, fields)`
+  (`PageBytes` for a byte slice) and come from it through `page.Handle(kind,
+  fn)`. `PageHas` asks what that script handles, `PageKept` and `PageKeep` read
+  and hand over a document the page keeps between visits, and `PageHidden` reports
+  a page nobody sees.
 
 ## Sub-packages
 
 - [`tui`](tui/README.md) — immediate-mode widget toolkit (regions, layout,
   widgets, scroll/editor state) built on the cell buffer model.
+- [`inline`](inline/README.md) — styled text and in-place progress in the
+  scrollback, for a CLI tool that does not own the screen.
+- [`glyph`](glyph/README.md) — for a host that draws cells itself: a bitmap face
+  at several cell sizes (its strikes), the software raster that draws a grid
+  with one, and a strike as a texture with the frames encoded for it. Its README
+  lays out the font file, the texture and the frames.
+- `atlas` — Hack as such a face, at 6x12, 8x16 and 12x24, and as a web font. The
+  application imports it and hands the face to its renderer, and no renderer
+  imports it, so a binary embeds only the form it names:
+
+  ```go
+  // a window: github.com/lixenwraith/terminal/window
+  win, err := window.Open(window.Config{Font: atlas.Hack(), Cols: 120, Rows: 40})
+  term := terminal.NewWithHost(win) // in place of terminal.New()
+
+  // a page, built for js/wasm
+  page, err := terminal.OpenPage(terminal.PageConfig{Font: atlas.HackWeb()})
+  term := terminal.NewWithHost(page)
+  ```
+
+  Hack comes under the MIT and Bitstream Vera licences:
+  [`atlas/LICENSE`](atlas/LICENSE) travels with any binary that embeds the face.
+  [`tool/font-atlas`](tool/font-atlas/README.md) regenerates both files.
+- `android` — the Go half of an Android view, with no binding of its own. A
+  `View` is a `Host`: the view's pixels are its grid, its keys, touches and text
+  are `Event`s, and a pinch is a zoom, which refits the grid. The drawer is the
+  application's, in Java or Kotlin: on its own thread it takes the strike's
+  texture (`Atlas`, then `AtlasChanged` before each `Take`, which hands over the
+  next strike's once a zoom crosses to it) and paints the frames from it, both as
+  [`glyph/README.md`](glyph/README.md) lays them out. `Resize` comes first, before
+  the program reads `Size` or a finger lands.
+- `window` — a desktop window as a `Host`, on Linux and FreeBSD: Xlib opens it
+  and reads its input, and EGL and GLES 2 show what `glyph.Raster` drew, each
+  loaded at run time through purego, so the binary keeps `CGO_ENABLED=0`. Ctrl
+  with `=`, `-` or the wheel zooms within `Config.Zoom`, and Ctrl with `0` goes
+  back to the font's own size. It is a nested module,
+  `github.com/lixenwraith/terminal/window`, tagged `window/vX.Y.Z`, so the root
+  keeps its imports. A FreeBSD build passes
+  `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.

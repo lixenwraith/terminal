@@ -569,7 +569,7 @@ func TestSessionLeavesTheTerminalAsItFoundIt(t *testing.T) {
 // A mouse mode change writes the modes dropped as reset and the modes added
 // as set, and sets the highest mode kept again, last, when another was dropped
 // or added under it; SGR is on while any mode is. Whether the terminal keeps
-// one mode (xterm, xterm.js, kitty), lets a set clear the others (alacritty)
+// one mode (xterm, kitty), lets a set clear the others (alacritty)
 // or keeps each and reports by the highest (VTE, WezTerm, Windows Terminal),
 // it then reports by the highest mode asked for.
 func TestMouseModeChangesKeepReporting(t *testing.T) {
@@ -618,7 +618,7 @@ func TestMouseModeChangesKeepReporting(t *testing.T) {
 }
 
 // reportedMouseMode replays mode sets and resets as each kind of terminal
-// keeps them and returns the mode each then reports by: xterm, xterm.js and
+// keeps them and returns the mode each then reports by: xterm and
 // kitty keep the last mode set, which a reset of any turns off; alacritty's set
 // clears the others and its reset only its own; VTE, WezTerm and Windows
 // Terminal keep each, reporting by the highest

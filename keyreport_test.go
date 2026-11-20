@@ -140,3 +140,60 @@ func TestKeysAtEachLevel(t *testing.T) {
 		}
 	}
 }
+
+// TestAHostKeyHoldsUntilItComesUpOnceAsked: keys are presses, repeats too, until a
+// game asks a host that can for releases; then a press holds until its key comes up,
+// the release carrying what the press did, a tap lets go as it presses, and focus
+// leaving or an ask for presses ends every hold as lost
+func TestAHostKeyHoldsUntilItComesUpOnceAsked(t *testing.T) {
+	var got []Event
+	k := HostKeys{Post: func(ev Event) { got = append(got, ev) }}
+	key := func(c rune, action KeyAction, lost bool) Event {
+		return Event{Type: EventKey, Key: KeyRune, Rune: c, Action: action, Lost: lost}
+	}
+	report := func(releases bool) Event {
+		if releases {
+			return Event{Type: EventKeyReport, Report: KeyReportReleases, Source: KeySourceHost}
+		}
+		return Event{Type: EventKeyReport, Report: KeyReportPresses}
+	}
+	expect := func(step string, want ...Event) {
+		t.Helper()
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: posted %+v, want %+v", step, got, want)
+		}
+		got = nil
+	}
+	press := key('a', KeyPress, false)
+
+	k.Down(38, press, false)
+	k.Down(38, press, true)
+	k.Up(38)
+	expect("before an ask", press, press)
+
+	k.Ask(KeyReportReleases, KeySourceProtocol, true)
+	k.Ask(KeyReportReleases, KeySourceHost, false)
+	expect("asks a host can't take", report(false), report(false))
+
+	k.Ask(KeyReportReleases, KeySourceProtocol|KeySourceHost, true)
+	k.Down(38, key('A', KeyPress, false), false)
+	k.Down(38, key('A', KeyPress, false), true)
+	k.Up(38)
+	k.Up(38)
+	expect("a hold", report(true), key('A', KeyPress, false), key('A', KeyRepeat, false),
+		key('A', KeyRelease, false))
+
+	k.Tap(press)
+	expect("a tap", press, key('a', KeyRelease, true))
+
+	k.Down(38, press, false)
+	k.Down(39, key('s', KeyPress, false), false)
+	k.Lost()
+	expect("focus leaving", press, key('s', KeyPress, false), key('a', KeyRelease, true),
+		key('s', KeyRelease, true))
+
+	k.Down(38, press, false)
+	k.Ask(KeyReportPresses, KeySourceHost, true)
+	k.Up(38)
+	expect("an ask for presses", press, key('a', KeyRelease, true), report(false))
+}
