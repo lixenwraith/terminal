@@ -519,6 +519,7 @@ one, and the script API a page of one's own is written against.
   loaded at run time through purego, so the binary keeps `CGO_ENABLED=0`. Ctrl
   with `=`, `-` or the wheel zooms within `Config.Zoom`, and Ctrl with `0` goes
   back to the font's own size. It is a nested module,
-  `github.com/lixenwraith/terminal/window`, tagged `window/vX.Y.Z`, so the root
-  keeps its imports. A FreeBSD build passes
+  `github.com/lixenwraith/terminal/window`, so the root keeps its imports, tagged
+  `window/vX.Y.Z` with every release of the root, which it requires at that
+  version: take both at one number. A FreeBSD build passes
   `-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.

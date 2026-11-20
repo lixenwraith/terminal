@@ -45,8 +45,8 @@ creating the file with the first note.
 - The module imports the standard library, `lixenwraith/color`, `golang.org/x/sys`
   and `golang.org/x/term` alone. A change color needs lands in that module, under
   its own rules, and terminal takes its tag. The one exception is `window/`, a
-  module of its own, which adds `ebitengine/purego` and is tagged `window/vX.Y.Z`
-  with the release that changes it.
+  module of its own, which adds `ebitengine/purego`, requires the root at its own
+  version and is tagged `window/vX.Y.Z` with every release, on the root's commit.
 - The module is at v0: a change may break the API, and takes the next minor
   version; never hold or narrow a fix for backward compatibility.
 
@@ -82,8 +82,10 @@ creating the file with the first note.
   patch otherwise, and Lixen tags it. Lixen squash-merges: a PR of one commit lands
   under that commit's subject and a PR of several under its title, so the title and
   every commit's subject start with the version.
-- A commit that changes `window/` names it (`v0.1.1 window: ...`), and its tag,
-  `window/v0.1.1`, mirrors the root's number.
+- Every release is two tags on one commit, `v0.1.1` and `window/v0.1.1`: whatever
+  else it changes, the commit moves `window/go.mod` to the root version it makes
+  and `window/go.sum` to that root's hash. A commit that changes the window's
+  code names it (`v0.1.1 window: ...`).
 - A change to documents alone makes no version and no tag: its subject starts
   `docs:` and its PR body with `doc only`.
 - A PR body is a summary, never documentation: a list of what changed, half a line
