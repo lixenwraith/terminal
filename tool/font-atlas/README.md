@@ -17,7 +17,7 @@ Needs Python 3 with Pillow, fontTools and brotli. The TTF is held to its SHA-256
 whether named or fetched, and a cache inside the repository is refused: the TTF is
 never committed.
 
-The code points are those of the font's cmap a cell draws as itself, 1,530 of
+The code points are those of the font's cmap a cell draws as itself, 1,537 of
 them: `terminal.OneColumn` decides and `atlas`'s test holds the file to it. The
 tool reads the same from Python's Unicode tables; a code point those tables let
 through and the test turns up is left out in the tool by name.

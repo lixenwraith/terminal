@@ -17,7 +17,7 @@ offset  size             field
 8       4                g, the count of glyphs
 12      l                the name, UTF-8, then zero bytes to the next multiple of 4
 ..      4*g              the runes, code points strictly ascending
-then for each strike, ascending by height:
+then for each strike, strictly ascending by height:
         2                width in pixels, 1 to 32
         2                height in pixels, at least 1
         g*height*stride  the glyphs in rune order, a glyph's rows top first:
@@ -74,8 +74,9 @@ offset  size             field
 
 `Font.Cell(density, dp)` is the pixels of a cell `dp` tall on a screen of `density`
 pixels a dp, whole ones at the face's aspect, and the strike that draws it: the
-largest no taller than the cell, so a glyph is stretched up and never down. The
-largest strike is the face's own size, the `dp` of a host that keeps no zoom.
+largest no taller than the cell, so a glyph is stretched up and never down in a
+font whose strikes share one aspect. The largest strike is the face's own size,
+the `dp` of a host that keeps no zoom.
 `Zoom.Scale` steps a zoom and stops at the smallest strike. When a zoom crosses a
 strike, the host makes that strike's `Texture` or `Raster` and hands its encoder to
 `Frames.SetEncoder`: the next frame is whole, in the new slots.

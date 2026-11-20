@@ -44,7 +44,9 @@ creating the file with the first note.
   never a switch or a parallel field.
 - The module imports the standard library, `lixenwraith/color`, `golang.org/x/sys`
   and `golang.org/x/term` alone. A change color needs lands in that module, under
-  its own rules, and terminal takes its tag.
+  its own rules, and terminal takes its tag. The one exception is `window/`, a
+  module of its own, which adds `ebitengine/purego` and is tagged `window/vX.Y.Z`
+  with the release that changes it.
 - The module is at v0: a change may break the API, and takes the next minor
   version; never hold or narrow a fix for backward compatibility.
 
@@ -80,6 +82,8 @@ creating the file with the first note.
   patch otherwise, and Lixen tags it. Lixen squash-merges: a PR of one commit lands
   under that commit's subject and a PR of several under its title, so the title and
   every commit's subject start with the version.
+- A commit that changes `window/` names it (`v0.1.1 window: ...`), and its tag,
+  `window/v0.1.1`, mirrors the root's number.
 - A change to documents alone makes no version and no tag: its subject starts
   `docs:` and its PR body with `doc only`.
 - A PR body is a summary, never documentation: a list of what changed, half a line
@@ -147,10 +151,21 @@ creating the file with the first note.
 ## Gates
 
 `go build ./...`, `gofmt -l` on changed files, `go test` on the packages the change
-touches, and the cross builds: `GOOS=freebsd GOARCH=amd64` and
-`GOOS=windows GOARCH=amd64` `go build ./...`, then
-`GOOS=js GOARCH=wasm go build . ./tui ./inline`, since `cmd/example-tui` does not
-build for a browser. The repository has no CI: the gates are the only check.
+touches, and the cross builds: `GOOS=freebsd GOARCH=amd64`,
+`GOOS=windows GOARCH=amd64` and `GOOS=js GOARCH=wasm` `go build ./...`, every
+package and command building for a browser. The repository has no CI: the gates
+are the only check.
+- A change to the root package runs its browser tests under Node:
+  `env -i PATH="$PATH" HOME="$HOME" GOOS=js GOARCH=wasm go test
+  -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" -run Page .`
+- `window/` is outside `./...`. A change to it, or to what it imports (the root
+  package, `glyph`), runs in `window/`: `CGO_ENABLED=0 go build ./...`;
+  `CGO_ENABLED=0 go test ./...` where `Xvfb` and Mesa's EGL and GLES are
+  installed, since the window test starts a server of its own and skips without
+  them; and `GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build
+  -gcflags=github.com/ebitengine/purego/internal/fakecgo=-std ./...`. Until the
+  root version its `go.mod` names is tagged, each runs under a `go.work` outside
+  the tree that uses both modules and replaces that version with the checkout.
 - A change to code a fuzz target reads runs that target a minute
   (`go test -run '^$' -fuzz '^FuzzChangedCells$' -fuzztime=1m`).
 - A mechanical edit across files is checked by a count before and after, with a
