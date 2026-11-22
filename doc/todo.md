@@ -130,7 +130,7 @@ and that exception dropped from both.
   (`Texture`)
 
 The face is Hack's own glyphs, its seven Powerline ones among them; no Nerd Fonts
-icon set is baked. Three things stand in the way: each set comes under a licence
+icon set is baked. Three things stand in the way: each set comes under a license
 of its own, which the owner has not reviewed; the icons read poorly as one-bit
 glyphs in a 12x24 cell, and worse below; and a set is thousands of glyphs, where
 a strike's texture holds a slot for every glyph of its font, so a bitmap host

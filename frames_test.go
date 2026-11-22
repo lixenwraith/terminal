@@ -81,7 +81,7 @@ func records(t *testing.T, frame []byte) int {
 // TestARuneFrameCarriesEachCellAsADrawerPaintsIt: a record is the cell's index, the
 // rune Flush would draw for it, and its colors resolved: reverse swaps them, dim
 // then halves the foreground, a palette index is xterm's color and the terminal's
-// own are light grey on black; a frame of changes carries the marked cells alone
+// own are light gray on black; a frame of changes carries the marked cells alone
 func TestARuneFrameCarriesEachCellAsADrawerPaintsIt(t *testing.T) {
 	red, blue := color.RGB{R: 0xff}, color.RGB{B: 0xff}
 	cells := []Cell{

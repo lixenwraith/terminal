@@ -263,7 +263,7 @@ func TestChoiceStopsAtTheEnds(t *testing.T) {
 }
 
 // A folded group says what it holds; an open one shows it instead
-func TestGroupSummarisesWhileFolded(t *testing.T) {
+func TestGroupSummarizesWhileFolded(t *testing.T) {
 	folded, open := canvas(30, 1, MonoTheme), canvas(30, 1, MonoTheme)
 	folded.Group(0, "tls", "on, pinned", false, false, MonoTheme)
 	open.Group(0, "tls", "on, pinned", true, false, MonoTheme)

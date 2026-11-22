@@ -108,7 +108,7 @@ func TestAProgramsOwnMessagesCrossThePagesBridge(t *testing.T) {
 // TestNewsInitOpensThePageAndFailsWhereNoneIs: New's Terminal is the page, which
 // Init opens: under Node, where no worker defines the bridge, Init says so and Fini
 // has nothing to end; over a worker it is the page's grid in truecolor, whatever
-// colour mode was asked.
+// color mode was asked.
 func TestNewsInitOpensThePageAndFailsWhereNoneIs(t *testing.T) {
 	term := New(ColorMode256)
 	if err := term.Init(); err == nil {

@@ -298,7 +298,7 @@ func oneColumn(r rune) rune {
 // drawnAs is the glyph a cell draws for each kind of rune that would not take
 // one column: a space for one a terminal acts on, hides or reorders text by
 // (a control, a format character, a line separator), U+FFFD for one it draws
-// in none or two or joins to a neighbour (a mark, a wide or emoji rune)
+// in none or two or joins to a neighbor (a mark, a wide or emoji rune)
 var drawnAs = [...]struct {
 	as    rune
 	runes []*unicode.RangeTable
@@ -329,7 +329,7 @@ var plain = func() (p [0x10000 >> 6]uint64) {
 
 // wideOrJoining is what a terminal draws in two columns, East Asian wide and
 // fullwidth and emoji presentation as of Unicode 17, and the letters a
-// grapheme cluster joins to a neighbour (Hangul jamo, Prepend, SpacingMark and
+// grapheme cluster joins to a neighbor (Hangul jamo, Prepend, SpacingMark and
 // Extend ones); a range spans the unassigned code points between its runes
 var wideOrJoining = &unicode.RangeTable{
 	R16: []unicode.Range16{

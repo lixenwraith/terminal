@@ -160,7 +160,7 @@ form.Group(y, "tls", "on, pinned", tlsOpen, focus.Index == 2, th)
   `AcceptNumber`); `Paste` inserts an `EventPaste`'s text with line breaks
   as spaces and control characters dropped.
 - `Radio` draws radio buttons in a row, the chosen one marked; too wide, it
-  shows the chosen one and its neighbours. `StepChoice` moves it on Left and
+  shows the chosen one and its neighbors. `StepChoice` moves it on Left and
   Right.
 - `Toggle` draws an on/off switch.
 - `Group` draws a foldable group's header, and its summary while folded.

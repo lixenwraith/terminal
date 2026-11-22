@@ -25,7 +25,7 @@ through and the test turns up is left out in the tool by name.
 A strike is Pillow's text at a pixel size, a pixel set from a coverage threshold;
 `STRIKES` holds both for each cell size. Box drawing and block elements have a
 pair of their own and are drawn without the font's hinting, which would put one
-glyph's line a row off its neighbour's; box drawing is moved besides, by a
+glyph's line a row off its neighbor's; box drawing is moved besides, by a
 fraction of a pixel, to where its lines fall on whole pixels. After a change to
 `STRIKES`, review the diff of `dump` before and after: the test checks six lines
 and the full block, and the eye the rest.

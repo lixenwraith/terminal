@@ -134,7 +134,7 @@ void main() {
 
     /* drawGlyphs draws slots from to to: the font sized so its advance is the cell's
        width, then stretched to the cell's height, so box-drawing glyphs meet their
-       neighbours both ways; a glyph wider than its cell is clipped to it. Slot i is
+       neighbors both ways; a glyph wider than its cell is clipped to it. Slot i is
        at column i % glyphs.cols. */
     function drawGlyphs(ctx, cw, ch, from, to) {
         const runes = glyphs.runes, slotCols = glyphs.cols;
@@ -183,7 +183,7 @@ void main() {
     }
 
     // The frame a drawer holds in device pixels, and where it is drawn: at the top,
-    // centred when narrower than the canvas
+    // centered when narrower than the canvas
     function frameOf(d) { return [d.cols * d.cw, d.rows * d.ch]; }
     function originOf(d) { return [Math.max(0, Math.floor((canvas.width - d.cols * d.cw) / 2)), 0]; }
 
