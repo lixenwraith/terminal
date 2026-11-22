@@ -139,7 +139,7 @@ func TestCellsSendNoControlCharacters(t *testing.T) {
 }
 
 // A cell is one column: a rune a terminal draws in none (a combining mark, a
-// joining jamo), in two (wide, fullwidth, emoji) or in its neighbour's cluster
+// joining jamo), in two (wide, fullwidth, emoji) or in its neighbor's cluster
 // (a spacing mark, a letter such as Thai's sara am) is drawn as U+FFFD, any
 // other as itself
 func TestEachCellIsOneColumn(t *testing.T) {

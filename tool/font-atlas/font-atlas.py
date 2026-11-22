@@ -161,7 +161,7 @@ def pack(ttf: bytes, runes: list[int]) -> bytes:
 def web(ttf: bytes, runes: list[int]) -> bytes:
     """The TTF as a woff2 of those code points. A page draws a code point a cell and
     scaled, so it loses its layout features, its hinting and ttfautohint's record
-    of it; it keeps every name, the copyright and the licence among them"""
+    of it; it keeps every name, the copyright and the license among them"""
     options = subset.Options(flavor="woff2", hinting=False, name_IDs=["*"])
     options.drop_tables += ["GSUB", "TTFA"]
     font = subset.load_font(io.BytesIO(ttf), options)

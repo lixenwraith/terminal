@@ -611,7 +611,7 @@ var xButtons = []terminal.MouseButton{terminal.MouseBtnLeft, terminal.MouseBtnMi
 	terminal.MouseBtnWheelUp, terminal.MouseBtnWheelDown, terminal.MouseBtnWheelLeft, terminal.MouseBtnWheelRight,
 	terminal.MouseBtnBack, terminal.MouseBtnForward}
 
-// cellAt is the cell under a window pixel, the frame being drawn centred; a pixel
+// cellAt is the cell under a window pixel, the frame being drawn centered; a pixel
 // in the margin takes the nearest edge cell
 func (w *Window) cellAt(px, py int) (int, int) {
 	cols, rows := w.Size()

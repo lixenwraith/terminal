@@ -187,7 +187,7 @@ since the frame the drawer holds: nil when none did, every cell after a resize,
 a `Sync` or a `SetEncoder`. `CellFrame` writes little-endian 32-bit words:
 columns, rows and a count, then for each cell its index, an id for its rune, and
 its colors as ARGB from `CellColors` (reverse, dim and a palette index resolved,
-the terminal's own as light grey on black). `RuneFrame`, the default, has the
+the terminal's own as light gray on black). `RuneFrame`, the default, has the
 rune `Flush` would draw as the id, for a drawer that keeps glyphs of its own;
 [`glyph`](glyph/README.md) has the encoders of one that paints from a bitmap face.
 
@@ -217,7 +217,7 @@ passes it to `Flush`. The output buffer diffs against the previously flushed fra
 - A cell is one glyph in one column, on a terminal that draws ambiguous-width
   runes (box drawing, U+FFFD) narrow: a control or format character in `Rune`
   (a pasted escape, a bidi override, a line separator) is drawn as a space,
-  and a rune a terminal draws in no column, in two or in its neighbour's
+  and a rune a terminal draws in no column, in two or in its neighbor's
   cluster (a combining or spacing mark, a wide or emoji rune) as U+FFFD.
   `OneColumn(r)` reports whether a cell draws `r` as itself, for a host that
   escapes or replaces the others its own way.
@@ -298,7 +298,7 @@ mark every selection with a glyph.
 `cons25*`, `vt` and a digit, `ansi` or `*-16color`), whatever `COLORTERM`
 says. In 16 colors every color change restates the style from a reset,
 since a console's bright colors (90-97) also set bold. `New()`
-also honours `NO_COLOR`, choosing `ColorModeNone`; a mode passed to `New`
+also honors `NO_COLOR`, choosing `ColorModeNone`; a mode passed to `New`
 overrides both, as a `--color=always` or `never` would. `Init` refuses
 `TERM=dumb`, which cannot address the cursor.
 
@@ -552,7 +552,7 @@ one, and the script API a page of one's own is written against.
   `Config.Font` or a view's), and as a web font (`HackWeb`, for
   `PageConfig.Font`). The application imports it and hands the face to its
   renderer, and no renderer imports it, so a binary embeds only the form it names.
-  Hack comes under the MIT and Bitstream Vera licences:
+  Hack comes under the MIT and Bitstream Vera licenses:
   [`atlas/LICENSE`](atlas/LICENSE) travels with any binary that embeds the face.
   [`tool/font-atlas`](tool/font-atlas/README.md) regenerates both files.
 - `android` — the Go half of an Android view, with no binding of its own. A

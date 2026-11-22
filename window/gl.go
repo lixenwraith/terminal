@@ -342,7 +342,7 @@ func (g *gpu) cell(cw, ch, tw, th int) {
 	glTexParameteri(glTexture2D, glTextureMag, filter)
 }
 
-// draw clears the window and draws the frame at its cell's size, centred
+// draw clears the window and draws the frame at its cell's size, centered
 func (g *gpu) draw(winW, winH int) {
 	glViewport(0, 0, int32(winW), int32(winH))
 	glClear(glColorBufferBit)

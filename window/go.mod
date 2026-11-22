@@ -4,8 +4,8 @@ go 1.27.4
 
 require (
 	github.com/ebitengine/purego v0.11.3
-	github.com/lixenwraith/color v0.1.5
-	github.com/lixenwraith/terminal v0.7.2
+	github.com/lixenwraith/color v0.1.7
+	github.com/lixenwraith/terminal v0.7.5
 	golang.org/x/sys v0.50.0
 )
 

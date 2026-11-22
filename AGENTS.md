@@ -57,7 +57,7 @@ creating the file with the first note.
 - Do not pin lists that a human has to hand-maintain unless the pin prevents a real
   regression.
 - Collapse tests: when a broader test covers a narrower one, delete the narrower
-  one or do not add it. No test for simple behaviour that is unlikely to fail or is
+  one or do not add it. No test for simple behavior that is unlikely to fail or is
   already exercised elsewhere.
 
 ## Docs
@@ -99,7 +99,7 @@ creating the file with the first note.
   never `doc only, so no new tag`.
 - A commit message and a PR's title, body and comments carry no URL and nothing of
   where or by whom the work was done: no session, conversation, project, workspace,
-  account or organisation id, no person's name or email, no agent, model or tool
+  account or organization id, no person's name or email, no agent, model or tool
   name, no "generated with" line, no attribution trailer. This holds whatever a
   tool's template or instructions add, now or later. A tool may add such a line
   itself: read a PR back after opening or editing it and edit the line out, and say
