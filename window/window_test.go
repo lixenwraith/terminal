@@ -62,7 +62,7 @@ func TestAKeyPressReportsWhatATerminalReports(t *testing.T) {
 }
 
 // TestAPixelMapsToTheCellDrawnUnderIt: at scale 2 a cell covers twice the pixels of
-// the font's largest strike each way, Hack's 12 by 24, the frame drawn centred,
+// the font's largest strike each way, Hack's 12 by 24, the frame drawn centered,
 // and a pixel in the margin takes the nearest edge cell
 func TestAPixelMapsToTheCellDrawnUnderIt(t *testing.T) {
 	w := newWindow(Config{Font: atlas.Hack(), Cols: 10, Rows: 5, Scale: 2})
