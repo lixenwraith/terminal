@@ -67,7 +67,8 @@ offset  size  field
 offset  size             field
 0       4                cols
 4       4                rows
-8       cols*w*rows*h*4  RGBA, rows top first, w by h the strike's cell
+8       cols*w*rows*h*4  RGBA, rows top first, w by h the raster's cell: the
+                         strike's, unless `SetCell` named another
 ```
 
 A cell drawer is checked with `NewProbe(tex, cols)`: `Probe.Frame`, every glyph
@@ -86,3 +87,11 @@ the smallest strike; the zero `Zoom` keeps the cell. When a zoom crosses a
 strike, the host makes that strike's `Texture` or `Raster`, and one whose drawer
 runs elsewhere hands its encoder to `Frames.SetEncoder`: the next frame is whole,
 in the new slots.
+
+A raster draws a cell at its strike's size. A host with nothing to scale its
+picture, as the Windows window, tells it the cell instead (`Raster.SetCell`):
+each glyph is then scaled once to its coverage of the cell, the share of each
+pixel its set pixels lie over, in 64 shades, and a changed cell is its two
+colors mixed by it. A whole multiple of the strike comes out as exact blocks,
+and a stem keeps one weight wherever it falls. The raster holds one such mask a
+glyph drawn, for the one size it is told.
