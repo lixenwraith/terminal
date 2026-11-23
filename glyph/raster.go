@@ -19,6 +19,8 @@ type Raster struct {
 	diff       []uint64        // the cells a frame changes from prev
 	cw, ch     int             // a cell's pixels: the strike's own until SetCell names others
 	masks      [][]byte        // at another size, each glyph's coverage of the cell, nil until drawn
+	fg, bg     color.RGB       // the colors mix holds, the last cell's that mixed any
+	mix        [256]uint32     // a pixel of bg and fg at each level of coverage, indexed by a byte unchecked
 }
 
 // NewRaster draws with a at its own size, a cell a.Width by a.Height pixels
@@ -68,7 +70,7 @@ func (r *Raster) Flush(cells []terminal.Cell, width, height int) {
 		r.prev = r.prev[:0]
 	}
 	cells = cells[:n]
-	paint := (*Raster).draw // left as it was written: the frame at the strike's own size is its loop
+	paint := (*Raster).draw // picked here: a test inside draw moves its loop, which slows the strike's own size
 	if r.masks != nil {
 		paint = (*Raster).blend
 	}
@@ -126,6 +128,10 @@ func (r *Raster) draw(cx, cy int, c terminal.Cell) {
 	}
 }
 
+// shades is the levels a glyph's coverage of a pixel is kept in, from 0 for none
+// of it to shades for all: a power of two, so a mix is a shift
+const shades = 64
+
 // blend paints one cell at a size other than the strike's: each pixel the cell's
 // two colors mixed by the glyph's coverage of it
 func (r *Raster) blend(cx, cy int, c terminal.Cell) {
@@ -139,9 +145,9 @@ func (r *Raster) blend(cx, cy int, c terminal.Cell) {
 	}
 	stride := r.cols * r.cw * 4
 	at := cy*r.ch*stride + cx*r.cw*4
-	back := uint32(bg.R) | uint32(bg.G)<<8 | uint32(bg.B)<<16 | 0xff<<24
 	if len(mask) == 0 { // a blank glyph, or a rune the font lacks
 		top := r.pix[at:][:r.cw*4]
+		back := uint32(bg.R) | uint32(bg.G)<<8 | uint32(bg.B)<<16 | 0xff<<24
 		for x := 0; x < len(top); x += 4 {
 			binary.LittleEndian.PutUint32(top[x:], back)
 		}
@@ -150,27 +156,29 @@ func (r *Raster) blend(cx, cy int, c terminal.Cell) {
 		}
 		return
 	}
-	fore := uint32(fg.R) | uint32(fg.G)<<8 | uint32(fg.B)<<16 | 0xff<<24
-	for y := range r.ch {
-		row := r.pix[at+y*stride:][:r.cw*4]
-		for x, cov := range mask[y*r.cw:][:r.cw] {
-			p := back
-			if cov == 255 {
-				p = fore
-			} else if cov != 0 {
-				a, b := uint32(cov), 255-uint32(cov)
-				p = (uint32(fg.R)*a+uint32(bg.R)*b+127)/255 | (uint32(fg.G)*a+uint32(bg.G)*b+127)/255<<8 |
-					(uint32(fg.B)*a+uint32(bg.B)*b+127)/255<<16 | 0xff<<24
-			}
-			binary.LittleEndian.PutUint32(row[x*4:], p)
+	if fg != r.fg || bg != r.bg || r.mix[shades] == 0 { // other colors, or none mixed yet: a mix has alpha
+		r.fg, r.bg = fg, bg
+		// Each channel times shades, a half added so the shift rounds
+		red, green, blue := shades*int32(bg.R)+shades/2, shades*int32(bg.G)+shades/2, shades*int32(bg.B)+shades/2
+		for level := range r.mix[:shades+1] {
+			r.mix[level] = uint32(red)/shades | uint32(green)/shades<<8 | uint32(blue)/shades<<16 | 0xff<<24
+			red, green, blue = red+int32(fg.R)-int32(bg.R), green+int32(fg.G)-int32(bg.G), blue+int32(fg.B)-int32(bg.B)
 		}
+	}
+	mix := &r.mix
+	for ; len(mask) > 0; at += stride {
+		row := r.pix[at:][:r.cw*4]
+		for x := 0; x+4 <= len(row); x += 4 {
+			binary.LittleEndian.PutUint32(row[x:x+4], mix[mask[x/4]])
+		}
+		mask = mask[r.cw:]
 	}
 }
 
-// cover is glyph i's coverage of each of the cell's pixels, 255 where its set
-// pixels lie over the whole of one, empty for a blank glyph. The strike's pixels
-// are squares stretched over the cell; lengths are whole numbers in units a
-// strike's pixel is r.cw or r.ch of and a cell's pixel a.Width or a.Height.
+// cover is glyph i's coverage of each of the cell's pixels, in shades, empty for a
+// blank glyph. The strike's pixels are squares stretched over the cell; lengths
+// are whole numbers in units a strike's pixel is r.cw or r.ch of and a cell's
+// pixel a.Width or a.Height.
 func (r *Raster) cover(i int) []byte {
 	a := r.atlas
 	glyph := a.glyph(i)
@@ -195,7 +203,7 @@ func (r *Raster) cover(i int) []byte {
 			}
 		}
 		for x, covered := range row {
-			mask[y*r.cw+x] = byte((covered*255 + area/2) / area)
+			mask[y*r.cw+x] = byte((covered*shades + area/2) / area)
 		}
 	}
 	return mask
