@@ -1,30 +1,27 @@
-//go:build linux || freebsd
+//go:build linux || freebsd || windows
 
-// Package window is a desktop window as a terminal.Host, on X11 under Linux and
-// FreeBSD: Xlib opens it and posts its keys and pointer as terminal events, EGL
-// and GLES 2 show each frame glyph.Raster draws as one texture, each loaded at run
-// time with purego, so the binary keeps CGO_ENABLED=0. Ctrl with =, - or the wheel
-// zooms within Config.Zoom, and Ctrl with 0 goes back to the font's own size.
+// Package window is a desktop window as a terminal.Host, drawn by glyph.Raster. On
+// X11, under Linux and FreeBSD, Xlib opens it and EGL shows each frame as one
+// texture, through GLES 2 or desktop OpenGL, all loaded at run time with purego; on
+// Windows it is a Win32 window and GDI shows the frame. Neither needs cgo. Ctrl
+// with =, - or the wheel zooms within Config.Zoom; Ctrl with 0 undoes the zoom.
 package window
 
 import (
 	"cmp"
 	"errors"
 	"math"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/lixenwraith/terminal"
 	"github.com/lixenwraith/terminal/glyph"
-	"golang.org/x/sys/unix"
 )
 
 // Config is the window as it opens: its title, the font cells are drawn with, the
 // grid it is sized for and the window pixels a pixel of the font's largest strike
-// covers each way, at least 1
+// covers each way, at least 1, which Windows multiplies by its display's scale
 type Config struct {
 	Title      string
 	Font       *glyph.Font
@@ -35,30 +32,32 @@ type Config struct {
 	// zoom keeps to, the zero Zoom none
 	Cell float64
 	Zoom glyph.Zoom
-	// Maximized or Fullscreen is the state the window opens in, asked of the window
-	// manager; the grid follows the size it gives, as it follows any resize
+	// Maximized or Fullscreen is the state the window opens in, on X11 asked of the
+	// window manager; the grid follows the size that gives, as it follows any resize.
+	// Windows has no manager to toggle full screen: F11 and Alt+Enter do there.
 	Maximized, Fullscreen bool
 }
 
-// Window is a terminal.Host over an X window. Frames, Sync and the pointer mode
-// may be set from any goroutine; one locked OS thread owns the display and the
-// context. Its close button posts terminal.EventClosed and leaves it open: Close,
-// which the Fini of NewWithHost's Terminal calls, closes it.
+// Window is a terminal.Host over a window of the platform's. Frames, Sync and the
+// pointer mode may be set from any goroutine; one locked OS thread owns the window
+// and what draws in it. Its close button posts terminal.EventClosed and leaves it
+// open: Close, which the Fini of NewWithHost's Terminal calls, closes it. On
+// Windows Ctrl-Shift-V and Shift-Insert post the clipboard's text as a paste.
 type Window struct {
-	font   *glyph.Font
-	own    float64 // the font's own cell height, its largest strike's
-	scale  int
-	keeps  glyph.Zoom
-	events chan terminal.Event
-	ready  chan struct{} // a frame is waiting to be drawn
-	stop   chan struct{}
-	done   chan struct{}
-	once   sync.Once
+	font    *glyph.Font
+	own     float64 // the font's own cell height, its largest strike's
+	density float64 // the window's pixels to a dp
+	keeps   glyph.Zoom
+	events  chan terminal.Event
+	ready   chan struct{} // a frame is waiting to be drawn
+	stop    chan struct{}
+	done    chan struct{}
+	once    sync.Once
 
 	grid    atomic.Uint64 // cols<<32 | rows
 	dp      atomic.Uint64 // the zoom, a cell's height in dp as float64 bits, 0 for the font's own
 	pointer atomic.Uint32 // pointerOff, pointerButtons or pointerMotion
-	asks    chan keyAsk   // the latest SetKeyReport the thread has not taken
+	asks    chan keyAsk   // the latest SetKeyReport the window has not taken
 	keys    terminal.HostKeys
 
 	mu             sync.Mutex
@@ -68,16 +67,13 @@ type Window struct {
 	sync           bool
 
 	// Owned by the window's thread
-	dpy, win   uintptr
-	deleteAtom uintptr
-	gpu        *gpu
+	native
 	atlas      *glyph.Atlas // the strike the zoom's cell is drawn with
 	raster     *glyph.Raster
 	cells      []terminal.Cell
 	winW, winH int
-	cw, ch     int // a cell's window pixels, at the scale and the zoom
+	cw, ch     int // a cell's window pixels, at the density and the zoom
 	lastCell   [2]int
-	detectable bool // the server repeats a held key as presses alone
 }
 
 type keyAsk struct {
@@ -91,64 +87,14 @@ const (
 	pointerMotion
 )
 
-// eventQueue matches the terminal's; pollWake bounds how long the X watcher takes
-// to notice Close
-const (
-	eventQueue = 256
-	pollWake   = 100 // ms
-)
+// eventQueue matches the terminal's
+const eventQueue = 256
 
-// settleWait bounds Open's wait for the window manager to place the window, as the
-// page's fit is bounded; settleQuiet is how long the size must then hold, since a
-// manager may size a window just after mapping it, as a Wayland compositor's does
-const (
-	settleWait  = time.Second
-	settleQuiet = 100 * time.Millisecond
-)
+// zoomStep is the factor one press or wheel step zooms the cell by, as on a page
+const zoomStep = 1.1
 
-// X event types and the input mask that selects them
-const (
-	xKeyPress        = 2
-	xKeyRelease      = 3
-	xButtonPress     = 4
-	xButtonRelease   = 5
-	xMotionNotify    = 6
-	xFocusOut        = 10
-	xExpose          = 12
-	xMapNotify       = 19
-	xConfigureNotify = 22
-	xClientMessage   = 33
-	xEventMask       = 1<<0 | 1<<1 | 1<<2 | 1<<3 | 1<<6 | 1<<15 | 1<<17 | 1<<21
-	xaAtom           = 4 // the ATOM property type
-	propModeReplace  = 0
-	notifyInferior   = 2 // focus event details
-	notifyPointer    = 5
-)
-
-// xEvent is Xlib's XEvent union, 24 longs; fields are read at their LP64 offsets
-type xEvent [24]int64
-
-func (e *xEvent) int32At(off uintptr) int32 { return *(*int32)(unsafe.Add(unsafe.Pointer(e), off)) }
-func (e *xEvent) uint64At(off uintptr) uint64 {
-	return *(*uint64)(unsafe.Add(unsafe.Pointer(e), off))
-}
-
-// sizeHints is XSizeHints, so the window manager resizes the window by whole cells
-type sizeHints struct {
-	flags                  int64
-	x, y, width, height    int32
-	minW, minH, maxW, maxH int32
-	incW, incH             int32
-	minAspect, maxAspect   [2]int32
-	baseW, baseH           int32
-	gravity                int32
-	_                      int32
-}
-
-const hintMinSize, hintResizeInc, hintBaseSize = 1 << 4, 1 << 6, 1 << 8
-
-// Open loads the libraries, opens the window on $DISPLAY and starts its thread; it
-// returns once the window manager has placed the window (settle)
+// Open opens the window and starts its thread; it returns once the window is
+// placed on screen, so Size is the grid it then holds
 func Open(cfg Config) (*Window, error) {
 	if cfg.Font == nil || cfg.Cols < 1 || cfg.Rows < 1 {
 		return nil, errors.New("window: a font and a grid of at least one cell are required")
@@ -169,15 +115,15 @@ func Open(cfg Config) (*Window, error) {
 func newWindow(cfg Config) *Window {
 	strikes := cfg.Font.Strikes()
 	w := &Window{
-		font:   cfg.Font,
-		own:    float64(strikes[len(strikes)-1].Height),
-		scale:  max(cfg.Scale, 1),
-		keeps:  cfg.Zoom,
-		events: make(chan terminal.Event, eventQueue),
-		ready:  make(chan struct{}, 1),
-		stop:   make(chan struct{}),
-		done:   make(chan struct{}),
-		asks:   make(chan keyAsk, 1),
+		font:    cfg.Font,
+		own:     float64(strikes[len(strikes)-1].Height),
+		density: float64(max(cfg.Scale, 1)),
+		keeps:   cfg.Zoom,
+		events:  make(chan terminal.Event, eventQueue),
+		ready:   make(chan struct{}, 1),
+		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
+		asks:    make(chan keyAsk, 1),
 	}
 	w.keys.Post = func(ev terminal.Event) { w.post(ev) }
 	w.setCell(cfg.Cell)
@@ -185,7 +131,7 @@ func newWindow(cfg Config) *Window {
 	return w
 }
 
-// Close stops the thread and releases the context and the window
+// Close stops the thread and releases the window and what draws in it
 func (w *Window) Close() {
 	w.once.Do(func() { close(w.stop) })
 	<-w.done
@@ -250,8 +196,8 @@ func (w *Window) SetPointerMode(enabled, motion bool) {
 	w.pointer.Store(mode)
 }
 
-// SetKeyReport asks for each key's release, which the window's thread answers with
-// an EventKeyReport: presses alone on a server that repeats a held key as releases
+// SetKeyReport asks for each key's release, which the window answers with an
+// EventKeyReport: presses alone on an X server that repeats a held key as releases
 // and presses, since those can't be told from the player's own
 func (w *Window) SetKeyReport(report terminal.KeyReport, allow terminal.KeySource) error {
 	for a := (keyAsk{report, allow}); ; {
@@ -260,7 +206,7 @@ func (w *Window) SetKeyReport(report terminal.KeyReport, allow terminal.KeySourc
 			return nil
 		default:
 		}
-		select { // an ask the thread has not taken gives way to this one
+		select { // an ask the window has not taken gives way to this one
 		case <-w.asks:
 		default:
 		}
@@ -273,11 +219,11 @@ func (w *Window) setGrid(cols, rows int) { w.grid.Store(uint64(cols)<<32 | uint6
 // font's own, which a program keeps for the next run
 func (w *Window) Cell() float64 { return math.Float64frombits(w.dp.Load()) }
 
-// setCell sizes a cell by the scale and the zoom dp, 0 for the font's own, and
+// setCell sizes a cell by the density and the zoom dp, 0 for the font's own, and
 // takes the strike that draws it, a raster of its own with it
 func (w *Window) setCell(dp float64) {
 	w.dp.Store(math.Float64bits(dp))
-	strike, cw, ch := w.font.Cell(float64(w.scale), cmp.Or(dp, w.own))
+	strike, cw, ch := w.font.Cell(w.density, cmp.Or(dp, w.own))
 	if w.cw, w.ch = cw, ch; strike != w.atlas {
 		w.atlas, w.raster = strike, glyph.NewRaster(strike)
 	}
@@ -286,84 +232,27 @@ func (w *Window) setCell(dp float64) {
 // cell is a cell's size in window pixels
 func (w *Window) cell() (int, int) { return w.cw, w.ch }
 
-func (w *Window) run(cfg Config, opened chan<- error) {
-	defer close(w.done)
-	// Xlib and the GL context belong to the thread that made them
-	runtime.LockOSThread()
-	if err := w.open(cfg); err != nil {
-		opened <- err
-		return
+// rasterize takes the newest frame posted and draws its changed cells in the raster
+func (w *Window) rasterize() {
+	w.mu.Lock()
+	w.cells = append(w.cells[:0], w.frame...)
+	width, height, sync := w.frameW, w.frameH, w.sync
+	w.posted, w.sync = time.Time{}, false
+	w.mu.Unlock()
+	if sync {
+		w.raster.Sync()
 	}
-	defer w.release()
-	w.settle(cfg.Fullscreen || cfg.Maximized)
-	opened <- nil
-
-	wake := make(chan struct{})
-	go w.watch(int(xConnectionNumber(w.dpy)), wake)
-	for {
-		if !w.pump() {
-			return
-		}
-		select {
-		case <-w.stop:
-			return
-		case <-wake:
-		case <-w.ready:
-			w.present()
-		case a := <-w.asks:
-			w.keys.Ask(a.report, a.allow, w.detectable)
-		}
-	}
-}
-
-func (w *Window) open(cfg Config) error {
-	if w.dpy = xOpenDisplay(0); w.dpy == 0 {
-		return errors.New("window: cannot open the X display; is DISPLAY set?")
-	}
-	screen := xDefaultScreen(w.dpy)
-	cw, ch := w.cell()
-	w.winW, w.winH = cfg.Cols*cw, cfg.Rows*ch
-	black := xBlackPixel(w.dpy, screen)
-	w.win = xCreateSimpleWindow(w.dpy, xRootWindow(w.dpy, screen), 0, 0, uint32(w.winW), uint32(w.winH), 0, black, black)
-	xSelectInput(w.dpy, w.win, xEventMask)
-	if xkbSetDetectableAutoRepeat != nil {
-		var supported int32
-		w.detectable = xkbSetDetectableAutoRepeat(w.dpy, 1, &supported) != 0 && supported != 0
-	}
-	xStoreName(w.dpy, w.win, cfg.Title)
-	w.deleteAtom = xInternAtom(w.dpy, "WM_DELETE_WINDOW", 0)
-	xSetWMProtocols(w.dpy, w.win, &w.deleteAtom, 1)
-	xSetWMNormalHints(w.dpy, w.win, &sizeHints{flags: hintMinSize | hintResizeInc | hintBaseSize,
-		minW: int32(cw), minH: int32(ch), incW: int32(cw), incH: int32(ch)})
-	// _NET_WM_STATE set before the map is the state the window manager opens with
-	if cfg.Fullscreen || cfg.Maximized {
-		states := []uintptr{xInternAtom(w.dpy, "_NET_WM_STATE_FULLSCREEN", 0)}
-		if !cfg.Fullscreen {
-			states = []uintptr{xInternAtom(w.dpy, "_NET_WM_STATE_MAXIMIZED_VERT", 0),
-				xInternAtom(w.dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", 0)}
-		}
-		xChangeProperty(w.dpy, w.win, xInternAtom(w.dpy, "_NET_WM_STATE", 0), xaAtom, 32, propModeReplace,
-			&states[0], int32(len(states)))
-	}
-	xMapWindow(w.dpy, w.win)
-	g, err := newGPU(w.dpy, w.win)
-	if err != nil {
-		w.release()
-		return err
-	}
-	w.gpu = g
-	g.cell(cw, ch, w.atlas.Width, w.atlas.Height)
-	return nil
+	w.raster.Flush(w.cells, width, height)
 }
 
 // zoom takes a zoom step: the grid the window's pixels hold follows the cell and is
-// posted as a resize, as a resized window's is. The size hints stay the opening
+// posted as a resize, as a resized window's is. The X size hints stay the opening
 // cell's: new ones would have the manager resize the window.
 func (w *Window) zoom(by float64) bool {
 	if !w.rescale(by) {
 		return true
 	}
-	w.gpu.cell(w.cw, w.ch, w.atlas.Width, w.atlas.Height)
+	w.recell()
 	w.present() // the newest frame again, which another strike may now draw
 	return !w.regrid() || w.postGrid()
 }
@@ -373,7 +262,7 @@ func (w *Window) zoom(by float64) bool {
 func (w *Window) rescale(by float64) bool {
 	kept, dp := w.Cell(), 0.0
 	if was := cmp.Or(kept, w.own); by != 0 {
-		if dp = w.keeps.Scale(w.font, float64(w.scale), was, by); dp == was {
+		if dp = w.keeps.Scale(w.font, w.density, was, by); dp == was {
 			return false
 		}
 	}
@@ -384,157 +273,13 @@ func (w *Window) rescale(by float64) bool {
 	return true
 }
 
-// settle takes the size the window manager places the window at, so Size is the
-// grid on screen when Open returns and no resize is posted for it: once the window
-// is mapped, and resized where a state was asked, its size has held for settleQuiet
-func (w *Window) settle(asked bool) {
-	fds := []unix.PollFd{{Fd: xConnectionNumber(w.dpy), Events: unix.POLLIN}}
-	openW, openH, mapped := w.winW, w.winH, false
-	bound := time.Now().Add(settleWait) // a wait on the window manager
-	until := bound
-	for {
-		var ev xEvent
-		for xPending(w.dpy) > 0 {
-			xNextEvent(w.dpy, &ev)
-			switch ev.int32At(0) {
-			case xMapNotify:
-				mapped = true
-			case xConfigureNotify:
-				w.fit(int(ev.int32At(56)), int(ev.int32At(60)))
-			default:
-				w.handle(&ev)
-				continue
-			}
-			until = bound
-			if quiet := time.Now().Add(settleQuiet); mapped && (!asked || w.winW != openW || w.winH != openH) && quiet.Before(bound) {
-				until = quiet
-			}
-		}
-		left := time.Until(until)
-		if left <= 0 {
-			return
-		}
-		if _, err := unix.Poll(fds, int(left/time.Millisecond)+1); err != nil && err != unix.EINTR {
-			return
-		}
-	}
-}
-
-func (w *Window) release() {
-	if w.gpu != nil {
-		w.gpu.release()
-		w.gpu = nil
-	}
-	if w.dpy != 0 {
-		xDestroyWindow(w.dpy, w.win)
-		xCloseDisplay(w.dpy)
-		w.dpy = 0
-	}
-}
-
-// watch wakes the window's thread when the X connection has input
-func (w *Window) watch(fd int, wake chan<- struct{}) {
-	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	for {
-		n, err := unix.Poll(fds, pollWake)
-		select {
-		case <-w.stop:
-			return
-		default:
-		}
-		if err != nil && err != unix.EINTR {
-			return
-		}
-		if n > 0 {
-			select {
-			case wake <- struct{}{}:
-			case <-w.stop:
-				return
-			}
-		}
-	}
-}
-
-// present draws the newest frame posted
-func (w *Window) present() {
-	w.mu.Lock()
-	w.cells = append(w.cells[:0], w.frame...)
-	width, height, sync := w.frameW, w.frameH, w.sync
-	w.posted, w.sync = time.Time{}, false
-	w.mu.Unlock()
-	if sync {
-		w.raster.Sync()
-	}
-	w.raster.Flush(w.cells, width, height)
-	pw, ph := w.raster.Bounds()
-	w.gpu.upload(w.raster.Pix(), pw, ph)
-	w.gpu.draw(w.winW, w.winH)
-}
-
-// pump handles every X event queued; false once the window was told to stop
-// while posting
-func (w *Window) pump() bool {
-	var ev xEvent
-	for xPending(w.dpy) > 0 {
-		xNextEvent(w.dpy, &ev)
-		if !w.handle(&ev) {
-			return false
-		}
-	}
-	return true
-}
-
-func (w *Window) handle(ev *xEvent) bool {
-	switch ev.int32At(0) {
-	case xKeyPress:
-		var keysym uint64
-		var buf [32]byte
-		xLookupString(ev, &buf[0], int32(len(buf)), &keysym, 0)
-		if by, ok := zoomKey(keysym, uint32(ev.int32At(80))); ok {
-			return w.zoom(by)
-		}
-		if k, ok := keyEvent(keysym, uint32(ev.int32At(80))); ok {
-			code := uint32(ev.int32At(84))
-			w.keys.Down(code, k, w.keys.Held(code))
-		}
-	case xKeyRelease:
-		w.keys.Up(uint32(ev.int32At(84)))
-	case xFocusOut:
-		// Focus gone to a child, or the pointer's part in a change to the pointer
-		// root, leaves the keys here; any other change takes their releases away
-		if detail := ev.int32At(44); detail != notifyInferior && detail != notifyPointer {
-			w.keys.Lost()
-		}
-	case xButtonPress, xButtonRelease, xMotionNotify:
-		if ev.int32At(0) == xButtonPress {
-			if by, ok := zoomWheel(ev.int32At(84), uint32(ev.int32At(80))); ok {
-				return w.zoom(by)
-			}
-		}
-		if m, ok := w.mouseEvent(ev); ok {
-			return w.post(m)
-		}
-	case xExpose:
-		if ev.int32At(56) == 0 { // the last of a run
-			w.gpu.draw(w.winW, w.winH)
-		}
-	case xConfigureNotify:
-		return w.resize(int(ev.int32At(56)), int(ev.int32At(60)))
-	case xClientMessage:
-		if uintptr(ev.uint64At(56)) == w.deleteAtom {
-			return w.post(terminal.Event{Type: terminal.EventClosed})
-		}
-	}
-	return true
-}
-
 // fit records the window's pixel size and reports whether its grid changed
 func (w *Window) fit(width, height int) bool {
 	if width == w.winW && height == w.winH {
 		return false
 	}
 	w.winW, w.winH = width, height
-	w.gpu.draw(width, height)
+	w.draw()
 	return w.regrid()
 }
 
@@ -557,59 +302,57 @@ func (w *Window) postGrid() bool {
 // resize follows the window's pixel size and posts the grid when it changed
 func (w *Window) resize(width, height int) bool { return !w.fit(width, height) || w.postGrid() }
 
-// mouseEvent is the terminal event for a button or motion event at the cell under
-// the pointer, as SGR mouse reporting gives it; motion is reported once per cell
-func (w *Window) mouseEvent(ev *xEvent) (terminal.Event, bool) {
+// keyEvent is the terminal event for a key press: key for a non-printing key, else
+// r, the character the layout gives the key with Shift applied. ok is false for a
+// key a terminal never sees: a modifier alone, a dead key, or Ctrl with a character
+// that sends no control byte.
+func keyEvent(key terminal.Key, r rune, mods terminal.Modifier) (terminal.Event, bool) {
+	ev := terminal.Event{Type: terminal.EventKey, Key: key}
+	if key != terminal.KeyNone {
+		if key == terminal.KeyBacktab {
+			ev.Modifiers = terminal.ModShift
+		}
+		// A terminal reports modifiers on the editing, navigation and function keys only
+		if key == terminal.KeyDelete || key >= terminal.KeyUp && key <= terminal.KeyF12 {
+			ev.Modifiers = mods
+		}
+		return ev, true
+	}
+	if r == 0 {
+		return ev, false
+	}
+	ev.Key, ev.Rune, ev.Modifiers = terminal.KeyRune, r, mods&terminal.ModAlt
+	if mods&terminal.ModCtrl != 0 {
+		var ok bool
+		if ev.Key, ok = terminal.ControlKey(r); !ok {
+			return ev, false
+		}
+		ev.Rune = 0
+	}
+	return ev, true
+}
+
+// pointerEvent is the terminal event for the pointer at a window pixel, as SGR mouse
+// reporting gives it: button pressed or released, or for a move the button held,
+// none for a bare one. A move is reported once per cell, as a drag with a button
+// and without one only where every motion is asked for.
+func (w *Window) pointerEvent(px, py int, button terminal.MouseButton, action terminal.MouseAction, mods terminal.Modifier) (terminal.Event, bool) {
 	mode := w.pointer.Load()
 	if mode == pointerOff {
 		return terminal.Event{}, false
 	}
-	state := uint32(ev.int32At(80))
-	m := terminal.Event{Type: terminal.EventMouse, Modifiers: modifiers(state)}
-	m.MouseX, m.MouseY = w.cellAt(int(ev.int32At(64)), int(ev.int32At(68)))
-	kind := ev.int32At(0)
-	if kind == xMotionNotify {
-		if [2]int{m.MouseX, m.MouseY} == w.lastCell {
-			return m, false
-		}
-		w.lastCell = [2]int{m.MouseX, m.MouseY}
-		switch {
-		case state&stateButton1 != 0:
-			m.MouseBtn = terminal.MouseBtnLeft
-		case state&stateButton2 != 0:
-			m.MouseBtn = terminal.MouseBtnMiddle
-		case state&stateButton3 != 0:
-			m.MouseBtn = terminal.MouseBtnRight
-		case mode != pointerMotion:
-			return m, false
-		}
-		m.MouseAction = terminal.MouseActionMove
-		if m.MouseBtn != terminal.MouseBtnNone {
-			m.MouseAction = terminal.MouseActionDrag
-		}
+	m := terminal.Event{Type: terminal.EventMouse, Modifiers: mods, MouseBtn: button, MouseAction: action}
+	m.MouseX, m.MouseY = w.cellAt(px, py)
+	moved := [2]int{m.MouseX, m.MouseY} != w.lastCell
+	w.lastCell = [2]int{m.MouseX, m.MouseY}
+	if action != terminal.MouseActionMove {
 		return m, true
 	}
-	w.lastCell = [2]int{m.MouseX, m.MouseY}
-	button := ev.int32At(84)
-	if button < 1 || int(button) > len(xButtons) {
-		return m, false
+	if button != terminal.MouseBtnNone {
+		m.MouseAction = terminal.MouseActionDrag
 	}
-	m.MouseBtn = xButtons[button-1]
-	m.MouseAction = terminal.MouseActionPress
-	if kind == xButtonRelease {
-		if button >= 4 && button <= 7 {
-			return m, false // a wheel step is its press
-		}
-		m.MouseAction = terminal.MouseActionRelease
-	}
-	return m, true
+	return m, moved && (button != terminal.MouseBtnNone || mode == pointerMotion)
 }
-
-// xButtons is X's button numbering from 1: left, middle, right, the wheel up,
-// down, left and right, then back and forward
-var xButtons = []terminal.MouseButton{terminal.MouseBtnLeft, terminal.MouseBtnMiddle, terminal.MouseBtnRight,
-	terminal.MouseBtnWheelUp, terminal.MouseBtnWheelDown, terminal.MouseBtnWheelLeft, terminal.MouseBtnWheelRight,
-	terminal.MouseBtnBack, terminal.MouseBtnForward}
 
 // cellAt is the cell under a window pixel, the frame being drawn centered; a pixel
 // in the margin takes the nearest edge cell

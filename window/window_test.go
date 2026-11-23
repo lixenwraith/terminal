@@ -1,31 +1,23 @@
-//go:build linux || freebsd
+//go:build linux || freebsd || windows
 
 package window
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"os/exec"
 	"runtime"
-	"slices"
-	"strings"
-	"syscall"
 	"testing"
-	"time"
-	"unsafe"
 
-	"github.com/ebitengine/purego"
 	"github.com/lixenwraith/color"
 	"github.com/lixenwraith/terminal"
 	"github.com/lixenwraith/terminal/atlas"
 	"github.com/lixenwraith/terminal/glyph"
 )
 
-// TestAKeyPressReportsWhatATerminalReports: a keysym and its modifiers become the
-// event the terminal module parses from the bytes a terminal sends for that key
+// TestAKeyPressReportsWhatATerminalReports: a non-printing key, or the character a
+// key types under its modifiers, becomes the event the terminal module parses from
+// the bytes a terminal sends for that key
 func TestAKeyPressReportsWhatATerminalReports(t *testing.T) {
-	const shift, ctrl, alt = stateShift, stateControl, stateMod1
+	const shift, alt, ctrl, none = terminal.ModShift, terminal.ModAlt, terminal.ModCtrl, terminal.KeyNone
 	key := func(k terminal.Key, m terminal.Modifier) terminal.Event {
 		return terminal.Event{Type: terminal.EventKey, Key: k, Modifiers: m}
 	}
@@ -33,31 +25,39 @@ func TestAKeyPressReportsWhatATerminalReports(t *testing.T) {
 		return terminal.Event{Type: terminal.EventKey, Key: terminal.KeyRune, Rune: r, Modifiers: m}
 	}
 	for _, c := range []struct {
-		keysym uint64
-		state  uint32
-		want   terminal.Event
+		key  terminal.Key
+		r    rune
+		mods terminal.Modifier
+		want terminal.Event
 	}{
-		{'a', 0, char('a', 0)},
-		{'A', shift, char('A', 0)},
-		{' ', 0, char(' ', 0)},
-		{'x', alt, char('x', terminal.ModAlt)},
-		{0x010003bb, 0, char('λ', 0)},
-		{'c', ctrl, key(terminal.KeyCtrlC, 0)},
-		{'C', ctrl | shift, key(terminal.KeyCtrlC, 0)},
-		{'h', ctrl, key(terminal.KeyBackspace, 0)},
-		{'[', ctrl, key(terminal.KeyEscape, 0)},
-		{0xff0d, 0, key(terminal.KeyEnter, 0)},
-		{0xff1b, 0, key(terminal.KeyEscape, 0)},
-		{0xfe20, shift, key(terminal.KeyBacktab, terminal.ModShift)},
-		{0xff52, shift, key(terminal.KeyUp, terminal.ModShift)},
-		{0xffc9, ctrl | alt, key(terminal.KeyF12, terminal.ModCtrl|terminal.ModAlt)},
+		{none, 'a', 0, char('a', 0)},
+		{none, 'A', shift, char('A', 0)},
+		{none, ' ', 0, char(' ', 0)},
+		{none, 'x', alt, char('x', alt)},
+		{none, 'λ', 0, char('λ', 0)},
+		{none, 'c', ctrl, key(terminal.KeyCtrlC, 0)},
+		{none, 'C', ctrl | shift, key(terminal.KeyCtrlC, 0)},
+		{none, 'x', ctrl | alt, key(terminal.KeyCtrlX, alt)},
+		{none, 'h', ctrl, key(terminal.KeyBackspace, 0)},
+		{none, '[', ctrl, key(terminal.KeyEscape, 0)},
+		{terminal.KeyEnter, 0, 0, key(terminal.KeyEnter, 0)},
+		{terminal.KeyEscape, 0, 0, key(terminal.KeyEscape, 0)},
+		{terminal.KeyBackspace, 0, ctrl, key(terminal.KeyBackspace, 0)},
+		{terminal.KeyBacktab, 0, shift, key(terminal.KeyBacktab, shift)},
+		{terminal.KeyUp, 0, shift, key(terminal.KeyUp, shift)},
+		{terminal.KeyF12, 0, ctrl | alt, key(terminal.KeyF12, ctrl|alt)},
 	} {
-		if got, ok := keyEvent(c.keysym, c.state); !ok || got != c.want {
-			t.Errorf("keysym %#x state %#x: %+v %v, want %+v", c.keysym, c.state, got, ok, c.want)
+		if got, ok := keyEvent(c.key, c.r, c.mods); !ok || got != c.want {
+			t.Errorf("key %v %q mods %#x: %+v %v, want %+v", c.key, c.r, c.mods, got, ok, c.want)
 		}
 	}
-	if ev, ok := keyEvent(0xffe1, shift); ok { // Shift_L alone
-		t.Errorf("a modifier alone reported %+v", ev)
+	for _, c := range []struct {
+		r    rune
+		mods terminal.Modifier
+	}{{0, shift}, {'1', ctrl}} { // a modifier alone, and Ctrl with what sends no control byte
+		if ev, ok := keyEvent(none, c.r, c.mods); ok {
+			t.Errorf("%q mods %#x reported %+v", c.r, c.mods, ev)
+		}
 	}
 }
 
@@ -78,38 +78,12 @@ func TestAPixelMapsToTheCellDrawnUnderIt(t *testing.T) {
 	}
 }
 
-// TestAZoomStepScalesTheWindowsCell: Ctrl with =, + or the wheel up zooms in a step
-// and with - or the wheel down out, the keypad's keys too, within the range and
-// never under the font's smallest strike, the grid the window's pixels hold
-// following and the largest strike the cell holds drawing it; Ctrl+0 puts the
-// font's own cell back, and no other key or wheel step zooms.
+// TestAZoomStepScalesTheWindowsCell: a zoom step scales the cell within the range
+// and never under the font's smallest strike, the grid the window's pixels hold
+// following and the largest strike the cell holds drawing it; a step of 0 puts the
+// font's own cell back
 func TestAZoomStepScalesTheWindowsCell(t *testing.T) {
-	const ctrl, in, out = stateControl, zoomStep, 1 / zoomStep
-	for _, c := range []struct {
-		keysym uint64
-		state  uint32
-		by     float64
-		ok     bool
-	}{
-		{'=', ctrl, in, true}, {'+', ctrl | stateShift, in, true}, {0xffab, ctrl, in, true},
-		{'-', ctrl, out, true}, {0xffad, ctrl, out, true}, {'0', ctrl, 0, true}, {0xffb0, ctrl, 0, true},
-		{'=', 0, 0, false}, {'=', ctrl | stateMod1, 0, false}, {'a', ctrl, 0, false},
-	} {
-		if by, ok := zoomKey(c.keysym, c.state); by != c.by || ok != c.ok {
-			t.Errorf("keysym %#x state %#x zooms by %v %v, want %v %v", c.keysym, c.state, by, ok, c.by, c.ok)
-		}
-	}
-	for _, c := range []struct {
-		button int32
-		state  uint32
-		by     float64
-		ok     bool
-	}{{4, ctrl, in, true}, {5, ctrl, out, true}, {4, 0, 0, false}, {1, ctrl, 0, false}} {
-		if by, ok := zoomWheel(c.button, c.state); by != c.by || ok != c.ok {
-			t.Errorf("button %d state %#x zooms by %v %v, want %v %v", c.button, c.state, by, ok, c.by, c.ok)
-		}
-	}
-
+	const in, out = zoomStep, 1 / zoomStep
 	w := newWindow(Config{Font: atlas.Hack(), Cols: 40, Rows: 20, Scale: 2, Zoom: glyph.Zoom{Least: 4, Most: 40, Step: 0.5}})
 	w.winW, w.winH = 40*24, 20*48
 	for _, c := range []struct {
@@ -142,220 +116,37 @@ func TestAZoomStepScalesTheWindowsCell(t *testing.T) {
 	}
 }
 
-// TestAButtonReportsWhatATerminalReports: X's buttons 1 to 9 become the buttons SGR
-// mouse reporting names; a wheel step reports its press alone, any other button
-// its press and its release
-func TestAButtonReportsWhatATerminalReports(t *testing.T) {
-	w := newWindow(Config{Font: atlas.Hack(), Cols: 10, Rows: 5, Scale: 1})
-	w.raster.Flush(make([]terminal.Cell, 10*5), 10, 5)
-	w.winW, w.winH = 10*12, 5*24
-	w.pointer.Store(pointerButtons)
-	event := func(kind, button int32) *xEvent {
-		var ev xEvent
-		*(*int32)(unsafe.Pointer(&ev)) = kind
-		*(*int32)(unsafe.Add(unsafe.Pointer(&ev), 84)) = button
-		return &ev
-	}
-	wheel := []terminal.MouseButton{terminal.MouseBtnWheelUp, terminal.MouseBtnWheelDown, terminal.MouseBtnWheelLeft, terminal.MouseBtnWheelRight}
-	for i, want := range []terminal.MouseButton{terminal.MouseBtnLeft, terminal.MouseBtnMiddle, terminal.MouseBtnRight,
-		wheel[0], wheel[1], wheel[2], wheel[3], terminal.MouseBtnBack, terminal.MouseBtnForward} {
-		button := int32(i + 1)
-		if got, ok := w.mouseEvent(event(xButtonPress, button)); !ok || got.MouseBtn != want || got.MouseAction != terminal.MouseActionPress {
-			t.Errorf("button %d pressed: %v %v %v, want a press of %v", button, got.MouseBtn, got.MouseAction, ok, want)
-		}
-		step := slices.Contains(wheel, want)
-		if got, ok := w.mouseEvent(event(xButtonRelease, button)); ok == step || ok && got.MouseAction != terminal.MouseActionRelease {
-			t.Errorf("button %d released: %v %v, a wheel step %v", button, got.MouseAction, ok, step)
-		}
-	}
-	if ev, ok := w.mouseEvent(event(xButtonPress, 10)); ok {
-		t.Errorf("button 10 reported %+v", ev)
-	}
-}
-
-// TestAWindowOpensAtTheSizeItsManagerGivesIt: a window settles on the grid of the
-// last size its manager gave and posts no resize for it, whether the manager sizes
-// it before mapping it, after, or late for a state asked of it, and Open returns
-// settled. The test is the manager, on an X server of its own.
-func TestAWindowOpensAtTheSizeItsManagerGivesIt(t *testing.T) {
-	xvfb(t)
-	lib, err := purego.Dlopen(libX11, purego.RTLD_NOW|purego.RTLD_GLOBAL)
-	if err != nil {
-		t.Skip(err)
-	}
-	var xResizeWindow func(dpy, win uintptr, w, h uint32) int32
-	var xSync func(dpy uintptr, discard int32) int32
-	purego.RegisterLibFunc(&xResizeWindow, lib, "XResizeWindow")
-	purego.RegisterLibFunc(&xSync, lib, "XSync")
-	const xMapRequest, substructureRedirect = 20, 1 << 20
-	// manage takes the next window that asks to be mapped and runs steps on it, those
-	// past | once the caller has heard of the first; it holds the redirect on return
-	manage := func(steps string) (acted, done chan struct{}) {
-		ready := make(chan bool)
-		acted, done = make(chan struct{}), make(chan struct{})
-		go func() {
-			defer close(done)
-			runtime.LockOSThread()
-			defer runtime.UnlockOSThread()
-			dpy := xOpenDisplay(0)
-			if ready <- dpy != 0; dpy == 0 {
-				return
-			}
-			defer xCloseDisplay(dpy)
-			xSelectInput(dpy, xRootWindow(dpy, xDefaultScreen(dpy)), substructureRedirect)
-			xSync(dpy, 0) // the server redirects from here
-			ready <- true
-			var ev xEvent
-			for ev.int32At(0) != xMapRequest {
-				xNextEvent(dpy, &ev)
-			}
-			win := uintptr(ev.uint64At(40))
-			act := func(steps string) {
-				for _, step := range strings.Fields(steps) {
-					switch step {
-					case "map":
-						xMapWindow(dpy, win)
-					case "half":
-						xResizeWindow(dpy, win, 360, 360)
-					default:
-						xResizeWindow(dpy, win, 480, 480)
-					}
-				}
-				xSync(dpy, 0) // the server has sent the window its events
-			}
-			first, late, _ := strings.Cut(steps, "|")
-			act(first)
-			close(acted)
-			if late != "" {
-				time.Sleep(2 * settleQuiet)
-				act(late)
-			}
-		}()
-		if !<-ready || !<-ready {
-			t.Fatal("the manager reached no display")
-		}
-		return acted, done
-	}
-	given := func(name string, w *Window) {
-		t.Helper()
-		if cols, rows := w.Size(); cols != 40 || rows != 20 {
-			t.Errorf("%s: settled at %dx%d, want the 40x20 its manager gave", name, cols, rows)
-		}
-		select {
-		case ev := <-w.events:
-			t.Errorf("%s: posted %+v for the size it opened at", name, ev)
-		default:
-		}
-	}
-	cfg := Config{Title: "test", Font: atlas.Hack(), Cols: 20, Rows: 10}
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	for name, c := range map[string]struct {
-		asked bool
-		steps string
-	}{
-		"sized before it is mapped":    {false, "size map"},
-		"sized after it is mapped":     {false, "map size"},
-		"sized again and mapped late":  {false, "half | size map"},
-		"sized late for a state asked": {true, "map | size"},
-	} {
-		acted, done := manage(c.steps)
-		cfg.Maximized = c.asked
-		w := newWindow(cfg)
-		if err := w.open(cfg); err != nil {
-			t.Skip(err)
-		}
-		xFlush(w.dpy)
-		<-acted // its events are sent before settle reads, so no clock decides the order
-		start := time.Now()
-		w.settle(c.asked)
-		if took := time.Since(start); took < settleQuiet {
-			t.Errorf("%s: settled in %v, before its size had held %v", name, took, settleQuiet)
-		}
-		given(name, w)
-		<-done // before the window goes, which the manager may still be sizing
-		w.release()
-	}
-
-	_, done := manage("size map")
-	cfg.Maximized = false
-	w, err := Open(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	given("opened", w)
-	<-done
-	w.Close()
-}
-
-// xvfb starts an X server of the test's own, with no window manager, and makes it
-// the display; a machine with none to start, or no libraries to draw with, skips
-func xvfb(t *testing.T) {
-	t.Helper()
-	path, err := exec.LookPath("Xvfb")
-	if err != nil {
-		t.Skip("no Xvfb to open a window on")
-	}
-	if err := load(); err != nil {
-		t.Skip(err)
-	}
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	// -noreset: a server that starts over as its last client goes refuses the next
-	cmd := exec.Command(path, "-displayfd", "3", "-noreset", "-screen", "0", "640x480x24", "-nolisten", "tcp")
-	cmd.ExtraFiles = []*os.File{w}
-	err = cmd.Start()
-	w.Close()
-	if err != nil {
-		t.Skip(err)
-	}
-	t.Cleanup(func() {
-		cmd.Process.Signal(syscall.SIGTERM) // it removes its socket and lock as it goes
-		cmd.Wait()
-	})
-	r.SetReadDeadline(time.Now().Add(10 * time.Second))
-	number, err := bufio.NewReader(r).ReadString('\n')
-	if err != nil {
-		t.Skipf("Xvfb named no display: %v", err)
-	}
-	t.Setenv("DISPLAY", ":"+strings.TrimSpace(number))
-	t.Setenv("LIBGL_ALWAYS_SOFTWARE", "1")
-}
-
-// BenchmarkPresent times a frame through the window: copy, raster, whole-texture
-// upload, draw and swap, finished on the GPU, at 15 % and at every cell changed.
-// Needs an X display with EGL and GLES 2; under a compositor the swap still waits
-// for the display's refresh.
+// BenchmarkPresent times a frame through the window: copy, raster and the host's
+// present, finished before the next frame, at 15 % and at every cell changed. Its
+// shapes are a window's pixels and its cell, the strike's own 12x24 or that
+// stretched: by 2, each pixel a block, or by 1.5, filtered.
 func BenchmarkPresent(b *testing.B) {
-	if os.Getenv("DISPLAY") == "" {
-		b.Skip("no X display")
-	}
-	if err := load(); err != nil {
-		b.Skip(err)
-	}
-	for _, grid := range [][2]int{{120, 40}, {200, 60}} {
+	for _, shape := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"1920x1080/cell=12x24", Config{Cols: 160, Rows: 45}},
+		{"3840x2160/cell=12x24", Config{Cols: 320, Rows: 90}},
+		{"3840x2160/cell=24x48", Config{Cols: 160, Rows: 45, Scale: 2}},
+		{"1908x1080/cell=18x36", Config{Cols: 106, Rows: 30, Cell: 36}},
+		{"3834x2160/cell=18x36", Config{Cols: 213, Rows: 60, Cell: 36}},
+	} {
 		for _, every := range []int{7, 1} {
-			b.Run(fmt.Sprintf("%dx%d/changed=%d%%", grid[0], grid[1], 100/every), func(b *testing.B) {
+			b.Run(fmt.Sprintf("%s/changed=%d%%", shape.name, 100/every), func(b *testing.B) {
 				runtime.LockOSThread()
 				defer runtime.UnlockOSThread()
-				cfg := Config{Title: "bench", Font: atlas.Hack(), Cols: grid[0], Rows: grid[1]}
-				w := newWindow(cfg)
-				if err := w.open(cfg); err != nil {
-					b.Skip(err)
-				}
+				cfg := shape.cfg
+				cfg.Title, cfg.Font = "bench", atlas.Hack()
+				w, finish := benchWindow(b, cfg)
 				defer w.release()
-				eglSwapInterval(w.gpu.display, 0) // the work, not the display's refresh
-				frames := gameFrames(grid[0]*grid[1], every)
-				w.Flush(frames[0], grid[0], grid[1])
+				frames := gameFrames(cfg.Cols*cfg.Rows, every)
+				w.Flush(frames[0], cfg.Cols, cfg.Rows)
 				w.present()
 				b.ResetTimer()
 				for i := range b.N {
-					w.Flush(frames[(i+1)%2], grid[0], grid[1])
+					w.Flush(frames[(i+1)%2], cfg.Cols, cfg.Rows)
 					w.present()
-					glFinish()
+					finish()
 				}
 			})
 		}
