@@ -8,6 +8,7 @@ import (
 
 	"github.com/lixenwraith/terminal"
 	"github.com/lixenwraith/terminal/atlas"
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -119,6 +120,76 @@ func TestAKeyMessageReportsWhatATerminalReports(t *testing.T) {
 		if got := posted(); !slices.Equal(got, c.want) {
 			t.Errorf("%s: posted %+v, want %+v", c.name, got, c.want)
 		}
+	}
+}
+
+// TestOnlyAWholeMultipleOfTheStrikeIsStretched: where a cell is a whole number of
+// its strike's each way the raster draws at the strike's size, for GDI to stretch
+// to blocks; any other cell it draws at the cell's own size, shown as it is
+func TestOnlyAWholeMultipleOfTheStrikeIsStretched(t *testing.T) {
+	for _, c := range []struct {
+		scale  int
+		dp     float64
+		cw, ch int // the cell
+		rw, rh int // what the raster draws it at
+	}{
+		{1, 0, 12, 24, 12, 24}, {2, 0, 24, 48, 12, 24}, {3, 0, 36, 72, 12, 24}, {1, 16, 8, 16, 8, 16},
+		{1, 36, 18, 36, 18, 36}, {3, 12, 18, 36, 18, 36}, {1, 30, 15, 30, 15, 30}, {1, 20, 10, 20, 10, 20},
+	} {
+		w := newWindow(Config{Font: atlas.Hack(), Cols: 1, Rows: 1, Scale: c.scale, Cell: c.dp})
+		w.recell()
+		if rw, rh := w.raster.Cell(); w.cw != c.cw || w.ch != c.ch || rw != c.rw || rh != c.rh {
+			t.Errorf("%g dp at scale %d: a %dx%d cell drawn at %dx%d, want %dx%d drawn at %dx%d",
+				c.dp, c.scale, w.cw, w.ch, rw, rh, c.cw, c.ch, c.rw, c.rh)
+		}
+	}
+}
+
+// TestAScaleChangeRescalesTheCellAndKeepsTheGrid: on WM_DPICHANGED the cell takes
+// the new DPI's size and the window the rectangle the system suggests; the frame is
+// drawn in the raster that cell needs before the window is resized, and no resize
+// is posted while the rectangle holds the grid it held
+func TestAScaleChangeRescalesTheCellAndKeepsTheGrid(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := load(); err != nil {
+		t.Skip(err)
+	}
+	cfg := Config{Title: "test", Font: atlas.Hack(), Cols: 20, Rows: 10}
+	w := newWindow(cfg)
+	if err := w.open(cfg); err != nil {
+		t.Skip(err)
+	}
+	defer w.release()
+	w.Flush(make([]terminal.Cell, cfg.Cols*cfg.Rows), cfg.Cols, cfg.Rows)
+	w.present()
+
+	// Half as many dots an inch again, and the rectangle a system suggests for
+	// it: the frame as it is around the same grid of the cells that DPI gives
+	dpi := uintptr(w.density / w.scale * 96 * 3 / 2)
+	_, cw, ch := w.font.Cell(w.scale*float64(dpi)/96, w.own)
+	var to, client windows.Rect
+	procGetWindowRect.Call(w.hwnd, uintptr(unsafe.Pointer(&to)))
+	procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&client)))
+	to.Right += int32(cfg.Cols*cw) - client.Right
+	to.Bottom += int32(cfg.Rows*ch) - client.Bottom
+	w.handle(wmDpiChanged, dpi|dpi<<16, uintptr(unsafe.Pointer(&to)))
+
+	if w.cw != cw || w.ch != ch || w.winW != cfg.Cols*cw || w.winH != cfg.Rows*ch {
+		t.Errorf("at %d DPI a cell is %dx%d in a window of %dx%d pixels, want %dx%d in %dx%d",
+			dpi, w.cw, w.ch, w.winW, w.winH, cw, ch, cfg.Cols*cw, cfg.Rows*ch)
+	}
+	rw, rh := w.raster.Cell()
+	if fw, fh := w.raster.Bounds(); fw != cfg.Cols*rw || fh != cfg.Rows*rh || rw != cw && rw != w.atlas.Width {
+		t.Errorf("the raster holds %dx%d pixels of %dx%d cells, want the frame's %dx%d cells", fw, fh, rw, rh, cfg.Cols, cfg.Rows)
+	}
+	if cols, rows := w.Size(); cols != cfg.Cols || rows != cfg.Rows {
+		t.Errorf("the grid became %dx%d", cols, rows)
+	}
+	select {
+	case ev := <-w.events:
+		t.Errorf("posted %+v for a rectangle of the same grid", ev)
+	default:
 	}
 }
 

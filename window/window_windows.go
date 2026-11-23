@@ -78,7 +78,6 @@ var (
 	procGlobalUnlock                  = proc(kernel, "GlobalUnlock")
 	procStretchDIBits                 = proc(gdi32, "StretchDIBits")
 	procSetStretchBltMode             = proc(gdi32, "SetStretchBltMode")
-	procSetBrushOrgEx                 = proc(gdi32, "SetBrushOrgEx")
 	procPatBlt                        = proc(gdi32, "PatBlt")
 )
 
@@ -111,7 +110,7 @@ const (
 	mkLButton, mkRButton, mkMButton       = 0x0001, 0x0002, 0x0010
 	mkButtons                             = mkLButton | mkRButton | mkMButton | 0x0020 | 0x0040 // and the X buttons
 	cfUnicodeText, biBitfields, srcCopy   = 13, 3, 0x00CC0020
-	blackness, colorOnColor, halftone     = 0x00000042, 3, 4
+	blackness, colorOnColor               = 0x00000042, 3
 	gwlStyle                              = ^uintptr(15) // -16
 	dpiPerMonitorV2                       = ^uintptr(3)  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, -4
 )
@@ -204,7 +203,7 @@ func register() error {
 	loaded.module = uintptr(module)
 	loaded.class, _ = windows.UTF16PtrFromString("terminal.window")
 	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
-	// A device context of its own keeps the stretch mode recell sets
+	// A device context of its own keeps the stretch mode open sets
 	class := wndClassEx{style: csOwnDC, wndProc: windows.NewCallback(wndProc), instance: loaded.module,
 		cursor: cursor, className: loaded.class}
 	class.size = uint32(unsafe.Sizeof(class))
@@ -266,6 +265,7 @@ func (w *Window) open(cfg Config) error {
 	}
 	w.hwnd, w.down, w.scale = hwnd, noKey, w.density
 	w.dc, _, _ = procGetDC.Call(hwnd)
+	procSetStretchBltMode.Call(w.dc, colorOnColor) // a pixel stretched is a block of itself
 	w.info = bitmapInfo{size: 40, planes: 1, bits: 32, compression: biBitfields, masks: [3]uint32{0xff, 0xff00, 0xff0000}}
 	live.Lock()
 	live.windows[hwnd] = w
@@ -351,11 +351,13 @@ func (w *Window) present() {
 	w.draw()
 }
 
-// draw stretches the raster's frame over its cells, centered, and fills what it
-// leaves of the window black
+// draw shows the raster's frame over its cells, centered, and fills what it leaves
+// of the window black: as it is where the raster drew at the cell's size, each of
+// its pixels a block where it drew at the strike's
 func (w *Window) draw() {
 	fw, fh := w.raster.Bounds()
-	dw, dh := fw/w.atlas.Width*w.cw, fh/w.atlas.Height*w.ch
+	rw, rh := w.raster.Cell()
+	dw, dh := fw/rw*w.cw, fh/rh*w.ch
 	x, y := (w.winW-dw)/2, (w.winH-dh)/2
 	for _, m := range [4][4]int{{0, 0, w.winW, y}, {0, y + dh, w.winW, w.winH - y - dh},
 		{0, y, x, dh}, {x + dw, y, w.winW - x - dw, dh}} {
@@ -372,15 +374,15 @@ func (w *Window) draw() {
 		uintptr(unsafe.Pointer(unsafe.SliceData(w.raster.Pix()))), uintptr(unsafe.Pointer(&w.info)), 0, srcCopy)
 }
 
-// recell sets how GDI stretches a cell of the strike over a cell of the window: a
-// whole multiple keeps each of its pixels a block, and any other is filtered
+// recell has the raster draw a whole multiple of the strike's cell at the strike's
+// size, for GDI to stretch, and any other cell at its own, so that nothing is
+// filtered on the way to the screen
 func (w *Window) recell() {
-	mode := uintptr(halftone)
-	if w.cw%w.atlas.Width == 0 && w.ch%w.atlas.Height == 0 {
-		mode = colorOnColor
+	rw, rh := w.atlas.Width, w.atlas.Height
+	if w.cw%rw != 0 || w.ch%rh != 0 {
+		rw, rh = w.cw, w.ch
 	}
-	procSetStretchBltMode.Call(w.dc, mode)
-	procSetBrushOrgEx.Call(w.dc, 0, 0, 0) // which a halftone stretch is to follow
+	w.raster.SetCell(rw, rh)
 }
 
 // wndProc is the window procedure of the class: a message of a window's making

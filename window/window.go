@@ -359,7 +359,8 @@ func (w *Window) pointerEvent(px, py int, button terminal.MouseButton, action te
 func (w *Window) cellAt(px, py int) (int, int) {
 	cols, rows := w.Size()
 	if fw, fh := w.raster.Bounds(); fw > 0 {
-		cols, rows = fw/w.atlas.Width, fh/w.atlas.Height
+		rw, rh := w.raster.Cell()
+		cols, rows = fw/rw, fh/rh
 	}
 	cw, ch := w.cell()
 	x, y := (px-(w.winW-cols*cw)/2)/cw, (py-(w.winH-rows*ch)/2)/ch
