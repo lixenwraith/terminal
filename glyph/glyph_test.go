@@ -156,8 +156,118 @@ func TestARasterDrawsTheAtlasInTheCellsColors(t *testing.T) {
 	}
 }
 
+// scaledFrame is a frame of the fixture's every glyph, one reversed, a blank and a
+// rune the font lacks, in colors no two channels of which blend alike
+func scaledFrame() ([]terminal.Cell, int, int) {
+	fg, bg := color.RGB{R: 200, G: 100}, color.RGB{G: 100, B: 200}
+	return []terminal.Cell{
+		{Rune: 'x', Fg: fg, Bg: bg}, {Rune: '"', Fg: fg, Bg: bg, Attrs: terminal.AttrReverse},
+		{Rune: '.', Fg: fg, Bg: bg}, {Rune: 'y', Fg: fg, Bg: bg},
+		{Rune: '"', Fg: fg, Bg: bg}, {Rune: 'x', Fg: color.RGB{R: 196}, Attrs: terminal.AttrFg256 | terminal.AttrBg256},
+	}, 3, 2
+}
+
+// TestAGlyphScaledToItsOwnSizeIsDrawnAsItIs: a glyph's coverage of a cell of the
+// strike's own size is its pixels, set or not, so the raster that scales draws
+// there, byte for byte, what the raster that does not draws
+func TestAGlyphScaledToItsOwnSizeIsDrawnAsItIs(t *testing.T) {
+	cells, cols, rows := scaledFrame()
+	for _, a := range parse(t, twoFile).Strikes() {
+		own, scaled := NewRaster(a), NewRaster(a)
+		scaled.masks = make([][]byte, a.font.Len()) // as SetCell leaves a raster of another size
+		own.Flush(cells, cols, rows)
+		scaled.Flush(cells, cols, rows)
+		if !bytes.Equal(own.pix, scaled.pix) {
+			t.Errorf("the %dx%d strike scaled to its own size differs from itself", a.Width, a.Height)
+		}
+	}
+}
+
+// TestAWholeMultipleOfTheStrikeIsItsPixelsAsBlocks: a cell a whole number of the
+// strike's each way is the strike's frame with each pixel a block of that many, as
+// nearest scaling gives it, whatever size the raster drew at before
+func TestAWholeMultipleOfTheStrikeIsItsPixelsAsBlocks(t *testing.T) {
+	cells, cols, rows := scaledFrame()
+	for _, a := range parse(t, twoFile).Strikes() {
+		own, scaled := NewRaster(a), NewRaster(a)
+		own.Flush(cells, cols, rows)
+		scaled.SetCell(a.Width+1, a.Height+2) // glyphs scaled for a size that is left
+		scaled.Flush(cells, cols, rows)
+		const kx, ky = 2, 3
+		scaled.SetCell(kx*a.Width, ky*a.Height)
+		if w, h := scaled.Bounds(); w != 0 || h != 0 {
+			t.Fatalf("a raster told another cell still holds a frame of %dx%d pixels", w, h)
+		}
+		scaled.Flush(cells, cols, rows)
+		w, h := own.Bounds()
+		if sw, sh := scaled.Bounds(); sw != kx*w || sh != ky*h {
+			t.Fatalf("the frame of %dx%d cells is %dx%d pixels, want %dx%d", kx*a.Width, ky*a.Height, sw, sh, kx*w, ky*h)
+		}
+		for y := range ky * h {
+			for x := range kx * w {
+				if got, want := scaled.pix[(y*kx*w+x)*4:][:4], own.pix[(y/ky*w+x/kx)*4:][:4]; !bytes.Equal(got, want) {
+					t.Fatalf("the %dx%d strike: pixel %d,%d is % x, want the strike's %d,%d, % x", a.Width, a.Height, x, y, got, x/kx, y/ky, want)
+				}
+			}
+		}
+	}
+}
+
+// TestAScaledPixelTakesTheShareOfItTheGlyphCovers: at a cell half as large again
+// a pixel lies over one of the strike's or half over each of two, each way, and
+// mixes the cell's colors by the share of it the glyph's set pixels cover
+func TestAScaledPixelTakesTheShareOfItTheGlyphCovers(t *testing.T) {
+	r := NewRaster(parse(t, twoFile).Strike(2)) // x is #..# over .##.
+	r.SetCell(6, 3)
+	if w, h := r.Cell(); w != 6 || h != 3 {
+		t.Fatalf("a raster told a 6x3 cell draws one %dx%d", w, h)
+	}
+	white := color.RGB{R: 255, G: 255, B: 255}
+	r.Flush([]terminal.Cell{{Rune: 'x', Fg: white}}, 1, 1)
+	var got [18]byte
+	for i := range got {
+		got[i] = r.pix[4*i]
+	}
+	if want := [18]byte{255, 128, 0, 0, 128, 255, 128, 128, 128, 128, 128, 128, 0, 128, 255, 255, 128, 0}; got != want {
+		t.Errorf("x covers the 6x3 cell by %v, want %v", got, want)
+	}
+	r.Flush([]terminal.Cell{{Rune: 'x', Fg: color.RGB{R: 200, G: 100}, Bg: color.RGB{G: 100, B: 200}}}, 1, 1)
+	if got, want := r.pix[4:8], []byte{100, 100, 100, 255}; !bytes.Equal(got, want) {
+		t.Errorf("a pixel half covered is % x, want the colors half and half, % x", got, want)
+	}
+}
+
+// TestAScaledFrameDrawsTheCellsThatChangedAlone: after one cell changed, a raster
+// that scales paints that cell's pixels as a whole frame would and no other
+func TestAScaledFrameDrawsTheCellsThatChangedAlone(t *testing.T) {
+	cells, cols, rows := scaledFrame()
+	a := parse(t, twoFile).Strike(2)
+	r, whole := NewRaster(a), NewRaster(a)
+	r.SetCell(6, 3)
+	whole.SetCell(6, 3)
+	r.Flush(cells, cols, rows)
+	for i := range r.pix {
+		r.pix[i] ^= 0x55 // every pixel marked: only a cell drawn again loses the mark
+	}
+	const changed = 4 // the cell at column 1 of row 1
+	cells[changed].Rune = 'x'
+	r.Flush(cells, cols, rows)
+	whole.Flush(cells, cols, rows)
+	for i, b := range r.pix {
+		x, y := i/4%(cols*6), i/4/(cols*6)
+		want := whole.pix[i] ^ 0x55
+		if x/6 == changed%cols && y/3 == changed/cols {
+			want = whole.pix[i]
+		}
+		if b != want {
+			t.Fatalf("pixel %d,%d holds %#x in byte %d, want %#x", x, y, b, i%4, want)
+		}
+	}
+}
+
 // BenchmarkRasterFlush draws a 120x40 frame of a 12x24 strike of 300 glyphs, of
-// which 15 % of the cells changed
+// which 15 % of the cells changed, at the strike's own size and scaled to a cell
+// half as large again
 func BenchmarkRasterFlush(b *testing.B) {
 	glyphs := map[rune][]string{}
 	for r := range rune(300) { // a box each: strokes, as a face's glyphs are, and no two alike
@@ -170,7 +280,7 @@ func BenchmarkRasterFlush(b *testing.B) {
 		rows[foot] = rows[top]
 		glyphs[' '+r] = rows
 	}
-	r := NewRaster(parse(b, pack("bench", strike{12, 24, glyphs})).Strike(24))
+	a := parse(b, pack("bench", strike{12, 24, glyphs})).Strike(24)
 	const w, h = 120, 40
 	frames := [2][]terminal.Cell{make([]terminal.Cell, w*h), make([]terminal.Cell, w*h)}
 	for i := range frames[0] {
@@ -180,11 +290,18 @@ func BenchmarkRasterFlush(b *testing.B) {
 			frames[1][i].Rune = '"'
 		}
 	}
-	r.Flush(frames[0], w, h)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := range b.N {
-		r.Flush(frames[i%2], w, h)
+	for _, cell := range [][2]int{{12, 24}, {18, 36}} {
+		b.Run(fmt.Sprintf("cell=%dx%d", cell[0], cell[1]), func(b *testing.B) {
+			r := NewRaster(a)
+			r.SetCell(cell[0], cell[1])
+			r.Flush(frames[0], w, h)
+			r.Flush(frames[1], w, h) // both frames' glyphs are scaled before the clock runs
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				r.Flush(frames[i%2], w, h)
+			}
+		})
 	}
 }
 
