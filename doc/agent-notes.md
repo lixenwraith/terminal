@@ -16,6 +16,12 @@ techniques, a bullet each. Delete a note the code has since made impossible.
   zip. A version the public proxy has fetched never changes there, so a root
   edit after that takes the next version, never a moved tag;
   `proxy.golang.org/cached-only/<module>/@v/<version>.info` says what it holds.
+- The root's hash before its tag exists: `zip.CreateFromVCS` of
+  `golang.org/x/mod` at the commit, `dirhash.HashZip` of that zip, and
+  `dirhash.Hash1` of the one file `go.mod`. The zip, its `.mod` and an `.info`
+  under a `file://` `GOPROXY`, with `GONOSUMDB` and an empty `GOMODCACHE`, then
+  build `window/` with `GOWORK=off` as the tag will. Any root file changed after
+  that changes the hash, a doc as much as code.
 - Go takes the `go.work` of any directory above the one it runs in, so a scratch
   module under one is refused (`directory prefix . does not contain modules
   listed in go.work`): `GOWORK=off`, or a `go.work` of its own. Its `go.mod`
@@ -71,9 +77,14 @@ techniques, a bullet each. Delete a note the code has since made impossible.
 ## The window
 
 - `TestAWindowOpensAtTheSizeItsManagerGivesIt` starts an Xvfb of its own and
-  skips without `Xvfb`, `libEGL.so.1` or `libGLESv2.so.2` (Debian's `xvfb`,
-  `libegl1`, `libgles2`, `libgl1-mesa-dri`): the package then reports `ok` with
-  the window never opened. Read `-v`.
+  skips without `Xvfb`, `libEGL.so.1` or any GL library (`libGLESv2.so.2`,
+  `libOpenGL.so.0`, `libGL.so.1`; Debian's `xvfb`, `libegl1`, `libgles2`,
+  `libgl1-mesa-dri`): the package then reports `ok` with the window never
+  opened. `TestTheWindowOpensWithEachGLLibraryThatLoads` logs the libraries a
+  machine lacks. Read `-v`.
+- Desktop GLSL of a context made with no version has no precision line: without
+  `#ifdef GL_ES` around it Mesa does not fail the compile, it crashes in
+  `glLinkProgram`.
 - That test is its own window manager. Xlib answers a second `XInternAtom` of
   one name from its cache, with no round trip: `XSync` is the round trip. An X
   error ends the process before a failure prints, so a window is kept until
@@ -83,6 +94,30 @@ techniques, a bullet each. Delete a note the code has since made impossible.
   `xdotool key ctrl+minus` steps the zoom, `import -window root` takes the
   screen. A screenshot shows a cell's pixels and whether they are filtered, not
   which strike was stretched: the unit test reads that from the raster's `Bounds`.
+- The Windows host runs under Wine: `GOOS=windows go test -c -o w.exe .` and
+  `wine w.exe -test.v` under an Xvfb, with openbox for a managed window; a
+  program is driven with xdotool as on X11. Ubuntu's Wine aborts with `free():
+  invalid pointer` unless `/run/user/<uid>` exists.
+- Wine 9.0 is not Windows where it matters to this host: `WM_MOUSEHWHEEL`
+  carries window coordinates; its size loop adds mouse steps to the rectangle
+  `WM_SIZING` returned; its virtual keys follow a US table under another X
+  layout; dead keys arrive as input-method text; it has one DPI, so no
+  `WM_DPICHANGED` (a test hands the handler one); and its GDI's timings are its
+  own.
+- What a 1:1 blit must show is checked without a screen: draw the frame with
+  `glyph.Raster` at the cell's size, write it as a PNG, and `compare -metric AE`
+  it with `import -window <id>` of the window's client area.
+- `go vet` refuses `unsafe.Pointer(lParam)`: read a pointer parameter through
+  `*(**T)(unsafe.Pointer(&p))` (`at`).
+- `Raster.draw`'s loop is sensitive to where it sits: a branch added at its top
+  cost 5 to 10 % on `BenchmarkRasterFlush`. Compare two builds in turn, pinned
+  (`taskset -c 2`, `-cpu 1`), fifteen runs each, and read the minimum: one run
+  on a shared machine swings by 15 %.
+- A sub-benchmark's name is split at each `/`, and so is `-bench`: `-bench
+  'Present/.*/cell=18x36'`, not `'Present/.*18x36'`.
+- Two agents on one machine collide on a hard-coded X display number: start
+  Xvfb only where `/tmp/.X11-unix/XN` does not exist. `pkill -f name` also kills
+  the shell whose command line names it: `pkill -x`.
 
 ## Tests
 

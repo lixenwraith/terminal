@@ -30,51 +30,6 @@ var keysymKeys = map[uint64]terminal.Key{
 	0xffc6: terminal.KeyF9, 0xffc7: terminal.KeyF10, 0xffc8: terminal.KeyF11, 0xffc9: terminal.KeyF12,
 }
 
-// keyEvent is the terminal event for a key press: keysym as the layout resolved it
-// with Shift applied, state the modifier bits. ok is false for a key a terminal
-// never sees, a modifier alone or a dead key.
-func keyEvent(keysym uint64, state uint32) (terminal.Event, bool) {
-	ev := terminal.Event{Type: terminal.EventKey}
-	if k, ok := keysymKeys[keysym]; ok {
-		ev.Key = k
-		if k == terminal.KeyBacktab {
-			ev.Modifiers = terminal.ModShift
-		}
-		// A terminal reports modifiers on the editing, navigation and function keys only
-		if k == terminal.KeyDelete || k >= terminal.KeyUp && k <= terminal.KeyF12 {
-			ev.Modifiers = modifiers(state)
-		}
-		return ev, true
-	}
-	r := keysymRune(keysym)
-	if r == 0 {
-		return ev, false
-	}
-	if state&stateControl != 0 {
-		lower := r
-		if lower >= 'A' && lower <= 'Z' {
-			lower += 'a' - 'A'
-		}
-		k, ok := terminal.ControlKey(lower)
-		if !ok {
-			return ev, false
-		}
-		ev.Key = k
-		if state&stateMod1 != 0 {
-			ev.Modifiers = terminal.ModAlt
-		}
-		return ev, true
-	}
-	ev.Key, ev.Rune = terminal.KeyRune, r
-	if state&stateMod1 != 0 {
-		ev.Modifiers = terminal.ModAlt
-	}
-	return ev, true
-}
-
-// zoomStep is the factor one press or wheel step zooms the cell by, as on a page
-const zoomStep = 1.1
-
 // zoomKey is the zoom step of a key press: Ctrl with = or + in, with - out and with
 // 0 back to the font's own, the keypad's too, as a factor, 0 for the last. A
 // terminal emulator and a browser keep these chords for their own zoom, and no

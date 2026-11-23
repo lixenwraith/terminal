@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -14,13 +15,29 @@ import (
 // The shared objects a Mesa or vendor desktop installs under the same names on
 // Linux and FreeBSD; the unversioned names belong to the development packages.
 const (
-	libX11    = "libX11.so.6"
-	libEGL    = "libEGL.so.1"
-	libGLESv2 = "libGLESv2.so.2"
+	libX11 = "libX11.so.6"
+	libEGL = "libEGL.so.1"
 )
 
-// Xlib, EGL and GLES 2 entry points. C int is int32 here: a 32-bit return leaves
-// the upper half of its register undefined.
+// glLibs are the GL libraries the window can draw with, in the order tried, and
+// EGL's names for what each is: GLES 2, then desktop OpenGL, which draws the same
+// calls and is all a Steam Linux Runtime has
+var glLibs = []glLib{
+	{"libGLESv2.so.2", eglOpenGLESAPI, eglOpenGLES2Bit, []int32{eglContextClientVersion, 2, eglNone}},
+	{"libOpenGL.so.0", eglOpenGLAPI, eglOpenGLBit, []int32{eglNone}},
+	{"libGL.so.1", eglOpenGLAPI, eglOpenGLBit, []int32{eglNone}},
+}
+
+type glLib struct {
+	path    string
+	api     uint32  // what eglBindAPI takes
+	bit     int32   // its EGL_RENDERABLE_TYPE
+	context []int32 // the attributes its context is made with
+}
+
+// Xlib, EGL and GL entry points, the GL ones those GLES 2 and desktop OpenGL share.
+// C int is int32 here: a 32-bit return leaves the upper half of its register
+// undefined.
 var (
 	xOpenDisplay        func(name uintptr) uintptr
 	xCloseDisplay       func(dpy uintptr) int32
@@ -93,6 +110,7 @@ var (
 const (
 	eglNone, eglSurfaceType, eglWindowBit         = 0x3038, 0x3033, 0x0004
 	eglRenderableType, eglOpenGLES2Bit            = 0x3040, 0x0004
+	eglOpenGLBit, eglOpenGLAPI                    = 0x0008, 0x30A2
 	eglRedSize, eglGreenSize, eglBlueSize         = 0x3024, 0x3023, 0x3022
 	eglContextClientVersion, eglOpenGLESAPI       = 0x3098, 0x30A0
 	eglPlatformX11                                = 0x31D5
@@ -115,16 +133,21 @@ type symbol struct {
 var loaded struct {
 	done bool
 	err  error
+	gl   *glLib // the GL library bound
 }
 
-// load opens the three libraries and binds every entry point, once; a missing
-// library or symbol is an error, never a panic
+// load opens Xlib, EGL and the first GL library that loads and binds every entry
+// point, once; a missing library or symbol is an error, never a panic
 func load() error {
-	if loaded.done {
-		return loaded.err
+	if !loaded.done {
+		loaded.done, loaded.err = true, bind()
 	}
-	loaded.done = true
-	libs := []struct {
+	return loaded.err
+}
+
+func bind() error {
+	const now = purego.RTLD_NOW | purego.RTLD_GLOBAL
+	for _, lib := range []struct {
 		path     string
 		syms     []symbol
 		optional []symbol // left nil when the library lacks them
@@ -150,7 +173,24 @@ func load() error {
 			{"eglDestroyContext", &eglDestroyContext}, {"eglTerminate", &eglTerminate},
 			{"eglGetError", &eglGetError},
 		}, []symbol{{"eglGetPlatformDisplay", &eglGetPlatformDisplay}}},
-		{libGLESv2, []symbol{
+	} {
+		h, err := purego.Dlopen(lib.path, now)
+		if err != nil {
+			return fmt.Errorf("window: %w", err) // dlerror names the library
+		}
+		if err := bindSyms(h, lib.path, lib.syms, lib.optional); err != nil {
+			return err
+		}
+	}
+	var tried []string
+	for i := range glLibs {
+		h, err := purego.Dlopen(glLibs[i].path, now)
+		if err != nil {
+			tried = append(tried, err.Error())
+			continue
+		}
+		loaded.gl = &glLibs[i]
+		return bindSyms(h, glLibs[i].path, []symbol{
 			{"glCreateShader", &glCreateShader}, {"glShaderSource", &glShaderSource},
 			{"glCompileShader", &glCompileShader}, {"glGetShaderiv", &glGetShaderiv},
 			{"glGetShaderInfoLog", &glGetShaderInfoLog}, {"glCreateProgram", &glCreateProgram},
@@ -166,26 +206,23 @@ func load() error {
 			{"glEnableVertexAttribArray", &glEnableVertexAttribArray},
 			{"glViewport", &glViewport}, {"glClearColor", &glClearColor}, {"glClear", &glClear},
 			{"glDrawArrays", &glDrawArrays}, {"glFinish", &glFinish},
-		}, nil},
+		}, nil)
 	}
-	for _, lib := range libs {
-		h, err := purego.Dlopen(lib.path, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	return fmt.Errorf("window: no GL library loads: %s", strings.Join(tried, "; "))
+}
+
+// bindSyms binds a library's entry points; an optional one it lacks stays nil
+func bindSyms(lib uintptr, path string, syms, optional []symbol) error {
+	for _, s := range syms {
+		fn, err := purego.Dlsym(lib, s.name)
 		if err != nil {
-			loaded.err = fmt.Errorf("window: %w", err) // dlerror names the library
-			return loaded.err
+			return fmt.Errorf("window: %s: %s: %w", path, s.name, err)
 		}
-		for _, s := range lib.syms {
-			fn, err := purego.Dlsym(h, s.name)
-			if err != nil {
-				loaded.err = fmt.Errorf("window: %s: %s: %w", lib.path, s.name, err)
-				return loaded.err
-			}
+		purego.RegisterFunc(s.fptr, fn)
+	}
+	for _, s := range optional {
+		if fn, err := purego.Dlsym(lib, s.name); err == nil {
 			purego.RegisterFunc(s.fptr, fn)
-		}
-		for _, s := range lib.optional {
-			if fn, err := purego.Dlsym(h, s.name); err == nil {
-				purego.RegisterFunc(s.fptr, fn)
-			}
 		}
 	}
 	return nil
@@ -200,12 +237,15 @@ type gpu struct {
 	cw, ch, tw, th            int // a cell's window pixels and its texels
 }
 
-// The quad covers the viewport; the texture's first row is the frame's top row
+// The quad covers the viewport; the texture's first row is the frame's top row.
+// The precision line is GLES's alone: desktop GLSL 1.10 has none.
 const (
 	vertexSource = `attribute vec2 p;
 varying vec2 uv;
 void main() { uv = vec2(p.x + 1.0, 1.0 - p.y) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }` + "\x00"
-	fragmentSource = `precision mediump float;
+	fragmentSource = `#ifdef GL_ES
+precision mediump float;
+#endif
 varying vec2 uv;
 uniform sampler2D frame;
 void main() { gl_FragColor = texture2D(frame, uv); }` + "\x00"
@@ -213,7 +253,8 @@ void main() { gl_FragColor = texture2D(frame, uv); }` + "\x00"
 
 var quad = []float32{-1, -1, 1, -1, -1, 1, 1, 1}
 
-// newGPU makes a GLES 2 context current on the calling thread, drawing to win
+// newGPU makes a context of the GL library bound current on the calling thread,
+// drawing to win
 func newGPU(xdpy, win uintptr) (*gpu, error) {
 	g := &gpu{cw: 1, ch: 1, tw: 1, th: 1}
 	// EGL 1.5 names the platform; an older one guesses it from the pointer
@@ -225,23 +266,24 @@ func newGPU(xdpy, win uintptr) (*gpu, error) {
 	if g.display == 0 || eglInitialize(g.display, nil, nil) == 0 {
 		return nil, eglErr("eglInitialize")
 	}
-	if eglBindAPI(eglOpenGLESAPI) == 0 {
+	gl := loaded.gl
+	if eglBindAPI(gl.api) == 0 {
 		g.release()
 		return nil, eglErr("eglBindAPI")
 	}
 	var config uintptr
 	var n int32
-	attribs := []int32{eglSurfaceType, eglWindowBit, eglRenderableType, eglOpenGLES2Bit,
+	attribs := []int32{eglSurfaceType, eglWindowBit, eglRenderableType, gl.bit,
 		eglRedSize, 8, eglGreenSize, 8, eglBlueSize, 8, eglNone}
 	if eglChooseConfig(g.display, attribs, &config, 1, &n) == 0 || n == 0 {
 		g.release()
-		return nil, errors.New("window: no EGL config draws GLES 2 to a window")
+		return nil, fmt.Errorf("window: no EGL config draws to a window with %s", gl.path)
 	}
 	if g.surface = eglCreateWindowSurface(g.display, config, win, nil); g.surface == 0 {
 		g.release()
 		return nil, eglErr("eglCreateWindowSurface")
 	}
-	if g.context = eglCreateContext(g.display, config, 0, []int32{eglContextClientVersion, 2, eglNone}); g.context == 0 {
+	if g.context = eglCreateContext(g.display, config, 0, gl.context); g.context == 0 {
 		g.release()
 		return nil, eglErr("eglCreateContext")
 	}

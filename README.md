@@ -9,8 +9,8 @@ own, alone adds `github.com/ebitengine/purego`.
 The package bypasses terminfo/termcap entirely and emits ANSI sequences directly.
 Target environments: xterm-compatible terminals on Linux, macOS and BSDs, Windows
 consoles with VT processing, and three hosts that draw the cells themselves: a
-browser page (js/wasm builds, on a canvas), a desktop window (X11, on Linux and
-FreeBSD) and an Android view.
+browser page (js/wasm builds, on a canvas), a desktop window (X11 on Linux and
+FreeBSD, Win32 on Windows) and an Android view.
 
 ## Quick start
 
@@ -92,7 +92,7 @@ go get github.com/lixenwraith/terminal/window@latest
 ```
 
 ```go
-//go:build linux || freebsd
+//go:build linux || freebsd || windows
 
 // imports github.com/lixenwraith/terminal/atlas and .../terminal/window
 win, err := window.Open(window.Config{
@@ -104,14 +104,21 @@ if err != nil {
 term := terminal.NewWithHost(win) // in place of terminal.New()
 ```
 
-`CGO_ENABLED=0 go build` builds it: Xlib, EGL and GLES 2 are loaded at run time
-(`libX11.so.6`, `libEGL.so.1`, `libGLESv2.so.2`, the last two from libglvnd or
-Mesa). A FreeBSD build adds
-`-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`.
-The package builds for Linux and FreeBSD alone, so a program built for other
-targets too opens the window in a file under that constraint. Ctrl with `=`, `-`
-or the wheel zooms once `Config.Zoom` names a range with a step, as
-`glyph.Zoom{Least: 4, Most: 40, Step: 0.5}` does.
+`CGO_ENABLED=0 go build` builds it. On Linux and FreeBSD Xlib, EGL and a GL
+library are loaded at run time: `libX11.so.6`, `libEGL.so.1`, and
+`libGLESv2.so.2` or, where GLES 2 is not installed, as in a Steam Linux Runtime,
+desktop OpenGL from `libOpenGL.so.0` or `libGL.so.1`. A FreeBSD build adds
+`-gcflags=github.com/ebitengine/purego/internal/fakecgo=-std`. On Windows 10
+1703 and later, amd64 and arm64, it is a Win32 window GDI copies each frame to:
+user32, gdi32 and kernel32 alone, with no purego in the binary, and
+`-ldflags=-H=windowsgui` builds a program with no console. The package builds
+for these three systems alone, so a program built for other targets too opens
+the window in a file under that constraint. Ctrl with `=`, `-` or the wheel
+zooms once `Config.Zoom` names a range with a step, as
+`glyph.Zoom{Least: 4, Most: 40, Step: 0.5}` does. On Windows a cell is
+`Config.Scale` times the display's scale, F11 and Alt+Enter toggle a borderless
+full screen, and Ctrl-Shift-V and Shift-Insert post the clipboard's text as one
+`EventPaste`.
 
 ### On Android
 
@@ -149,7 +156,7 @@ from the strike's texture, as [`glyph`](glyph/README.md) lays them out. The
             └── Host (interface)   a screen that draws the cells itself, and its input
                   ├── Page           //go:build js && wasm — OpenPage: a browser page, syscall/js
                   ├── android.View   an Android view; the app's drawer takes its frames
-                  └── window.Window  its own module, linux || freebsd — Xlib, EGL, GLES 2
+                  └── window.Window  its own module — Xlib, EGL, GLES 2 or OpenGL; on Windows Win32, GDI
 
 Shared code carries no build tags: cell diffing, ANSI generation, escape parsing.
 Platform specifics are isolated in the `Backend` implementations and in the
@@ -564,11 +571,16 @@ one, and the script API a page of one's own is written against.
   so the drawer repaints once) and paints the frames from it, both as
   [`glyph/README.md`](glyph/README.md) lays them out. `Resize` comes first, before
   the program reads `Size` or a finger lands.
-- `window` — a desktop window as a `Host`, on Linux and FreeBSD: Xlib opens it
-  and reads its input, and EGL and GLES 2 show what `glyph.Raster` drew, each
-  loaded at run time through purego, so the binary keeps `CGO_ENABLED=0`. Ctrl
-  with `=`, `-` or the wheel zooms within `Config.Zoom` (none at its zero
-  value), and Ctrl with `0` goes back to the font's own size. It is a nested
+- `window` — a desktop window as a `Host`. On Linux and FreeBSD Xlib opens it
+  and reads its input, and EGL shows what `glyph.Raster` drew through GLES 2 or
+  desktop OpenGL, each loaded at run time through purego. On Windows it is a
+  Win32 window, its keys read from its messages, releases among them, and its
+  frames copied to it by GDI: a cell that is a whole multiple of its strike is
+  stretched to blocks and any other drawn by the raster at the cell's own size
+  (`Raster.SetCell`), so a display at 125 or 150 % filters nothing on the way.
+  The binary keeps `CGO_ENABLED=0` on each. Ctrl with `=`, `-` or the wheel
+  zooms within `Config.Zoom` (none at its zero value), and Ctrl with `0` goes
+  back to the font's own size. It is a nested
   module, `github.com/lixenwraith/terminal/window`, so the root keeps its
   imports, tagged `window/vX.Y.Z` with every release of the root since v0.7.1,
   which it requires at that version: take both at one number.
